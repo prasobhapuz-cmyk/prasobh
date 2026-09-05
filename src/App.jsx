@@ -46,14 +46,44 @@ export default function App() {
     };
   }, [activeFolder]);
 
-  // Load initial data from IndexedDB
+  // Load initial data from local DB and sync from global manifest in background
   const loadData = async () => {
     try {
       await initializeStorage();
-      const loadedAlbums = await getAlbums();
-      const loadedMedia = await getAllMedia();
-      setAlbums(loadedAlbums);
-      setMedia(loadedMedia);
+      const localAlbums = await getAlbums();
+      const localMedia = await getAllMedia();
+      
+      if (localAlbums && localAlbums.length > 0) {
+        setAlbums(localAlbums);
+      }
+      if (localMedia) {
+        setMedia(localMedia);
+      }
+
+      // Background manifest sync so visitors on ANY mobile/desktop device see all published albums
+      try {
+        const res = await fetch(`/gallery_manifest.json?t=${Date.now()}`, { cache: 'no-cache' });
+        if (res.ok) {
+          const manifest = await res.json();
+          if (manifest && manifest.albums && Array.isArray(manifest.albums) && manifest.albums.length > 0) {
+            const mergedAlbumsMap = new Map();
+            localAlbums.forEach((a) => mergedAlbumsMap.set(a.id, a));
+            manifest.albums.forEach((a) => mergedAlbumsMap.set(a.id, a));
+            const mergedAlbums = Array.from(mergedAlbumsMap.values());
+            
+            setAlbums(mergedAlbums);
+
+            if (manifest.media && Array.isArray(manifest.media)) {
+              const mergedMediaMap = new Map();
+              localMedia.forEach((m) => mergedMediaMap.set(m.id, m));
+              manifest.media.forEach((m) => mergedMediaMap.set(m.id, m));
+              setMedia(Array.from(mergedMediaMap.values()));
+            }
+          }
+        }
+      } catch (manifestErr) {
+        // Offline or manifest skipped, keep local data
+      }
     } catch (err) {
       console.error('Failed to load gallery data:', err);
     }
