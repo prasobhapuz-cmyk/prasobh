@@ -120,8 +120,8 @@ export async function uploadAssetToCloud(fileOrDataUrl, filename = 'asset.jpg') 
     console.warn('Serverless uploader error:', err);
   }
 
-  // Fallback to high quality photography preset if network was completely unavailable
-  return 'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?q=80&w=1200&auto=format&fit=crop';
+  // Return user's actual image data instead of any placeholder
+  return fileOrDataUrl;
 }
 
 // 2. Fetch full gallery data from Centralized Cloud Database

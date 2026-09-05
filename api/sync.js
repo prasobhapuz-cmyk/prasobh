@@ -34,30 +34,21 @@ const DEFAULT_ALBUMS = [
 let memoryCache = null;
 
 function sanitizePayload(payload) {
-  const defaultFallbackImg = 'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?q=80&w=1200&auto=format&fit=crop';
+  const cleanAlbums = (payload.albums || []).map((alb) => ({
+    ...alb,
+    title: alb.title || 'Untitled Folder',
+    location: alb.location || '',
+    coverImage: alb.coverImage || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200&auto=format&fit=crop',
+    description: alb.description || ''
+  }));
 
-  const cleanAlbums = (payload.albums || []).map((alb) => {
-    let cover = alb.coverImage || defaultFallbackImg;
-    // If cover is an oversized base64 data url (>50KB), replace with fallback to prevent 413 size limits
-    if (typeof cover === 'string' && cover.startsWith('data:') && cover.length > 50000) {
-      cover = defaultFallbackImg;
-    }
-    return {
-      ...alb,
-      coverImage: cover
-    };
-  });
-
-  const cleanMedia = (payload.media || []).map((item) => {
-    let url = item.url || defaultFallbackImg;
-    if (typeof url === 'string' && url.startsWith('data:') && url.length > 50000) {
-      url = defaultFallbackImg;
-    }
-    return {
-      ...item,
-      url
-    };
-  });
+  const cleanMedia = (payload.media || []).map((item) => ({
+    ...item,
+    title: item.title || 'Photo',
+    location: item.location || '',
+    url: item.url || '',
+    albumId: item.albumId || cleanAlbums[0]?.id || 'folder-kyoto'
+  }));
 
   return {
     albums: cleanAlbums,

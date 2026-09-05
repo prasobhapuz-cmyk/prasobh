@@ -127,7 +127,7 @@ export default function StudioModal({
             reader.readAsDataURL(file);
           });
         } else {
-          finalUrl = await compressImage(file, 1920, 1920, 0.85);
+          finalUrl = await compressImage(file, 1200, 1200, 0.75);
         }
 
         if (finalUrl) {

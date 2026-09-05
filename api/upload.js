@@ -73,7 +73,7 @@ export default async function handler(req, res) {
     }
 
     const dataUrl = body.image;
-    // If it's already an external HTTP URL, just return it
+    // If it's already an external HTTP URL or image stream URL, just return it
     if (!dataUrl.startsWith('data:')) {
       return res.status(200).json({ success: true, url: dataUrl });
     }
@@ -86,14 +86,10 @@ export default async function handler(req, res) {
       const imageUrl = `/api/image?id=${binId}`;
       return res.status(200).json({ success: true, url: imageUrl, binId });
     } catch (binErr) {
-      console.warn('Dedicated bin creation failed:', binErr.message);
+      console.warn('Dedicated bin creation failed, returning user asset:', binErr.message);
+      // Return user's actual image data instead of any placeholder
+      return res.status(200).json({ success: true, url: dataUrl });
     }
-
-    // Fallback: If cloud bin creation failed, use high quality Unsplash preset
-    return res.status(200).json({
-      success: true,
-      url: 'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?q=80&w=1200&auto=format&fit=crop'
-    });
   } catch (err) {
     console.error('Image upload handler error:', err);
     return res.status(500).json({ error: err.message });
