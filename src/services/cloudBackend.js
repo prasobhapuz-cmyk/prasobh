@@ -86,9 +86,9 @@ export async function uploadAssetToCloud(fileOrDataUrl, filename = 'photo.jpg') 
     return fileOrDataUrl;
   }
 
-  // Serverless upload endpoint (/api/upload) with retry & exponential backoff
+  // Serverless upload endpoint (/api/upload) with 3 retries & exponential backoff
   if (typeof window !== 'undefined') {
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const res = await fetch('/api/upload', {
           method: 'POST',
@@ -103,8 +103,8 @@ export async function uploadAssetToCloud(fileOrDataUrl, filename = 'photo.jpg') 
           }
         }
       } catch (apiErr) {
-        if (attempt === 0) {
-          await new Promise(r => setTimeout(r, 250));
+        if (attempt < 2) {
+          await new Promise(r => setTimeout(r, 300));
         }
       }
     }
@@ -224,25 +224,36 @@ export async function pushCloudGalleryData(albums, media) {
     createdAt: a.createdAt || new Date().toISOString()
   }));
 
-  const normalizedMedia = (media || []).map(m => ({
-    ...m,
-    id: m.mediaId || m.id,
-    mediaId: m.mediaId || m.id,
-    albumId: m.folderId || m.albumId,
-    folderId: m.folderId || m.albumId,
-    userId: m.userId || 'user_prasobh_appus07',
-    createdAt: m.createdAt || new Date().toISOString()
-  }));
+  // Ensure all media items have stream URLs and NO raw Base64 data URLs
+  const sanitizedMedia = [];
+  for (const m of (media || [])) {
+    let finalUrl = m.url || '';
+    if (finalUrl.startsWith('data:')) {
+      try {
+        finalUrl = await uploadAssetToCloud(finalUrl, `${m.title || 'photo'}_${Date.now()}.jpg`);
+      } catch (err) {}
+    }
+    sanitizedMedia.push({
+      ...m,
+      id: m.mediaId || m.id,
+      mediaId: m.mediaId || m.id,
+      albumId: m.folderId || m.albumId,
+      folderId: m.folderId || m.albumId,
+      url: finalUrl,
+      userId: m.userId || 'user_prasobh_appus07',
+      createdAt: m.createdAt || new Date().toISOString()
+    });
+  }
 
   const payload = {
     albums: normalizedAlbums,
-    media: normalizedMedia,
+    media: sanitizedMedia,
     updatedAt: new Date().toISOString()
   };
 
   // Immediate in-memory notification for instant 0ms UI update
-  inMemoryData = { albums: normalizedAlbums, media: normalizedMedia };
-  notifySubscribers({ albums: normalizedAlbums, media: normalizedMedia });
+  inMemoryData = { albums: normalizedAlbums, media: sanitizedMedia };
+  notifySubscribers({ albums: normalizedAlbums, media: sanitizedMedia });
 
   // Strategy A: Serverless /api/sync endpoint
   if (typeof window !== 'undefined') {
@@ -255,7 +266,7 @@ export async function pushCloudGalleryData(albums, media) {
 
       if (res.ok) {
         const data = await res.json();
-        return { success: true, albums: data.albums || normalizedAlbums, media: data.media || normalizedMedia };
+        return { success: true, albums: data.albums || normalizedAlbums, media: data.media || sanitizedMedia };
       }
     } catch (apiSyncErr) {
       console.warn('API /api/sync error, falling back to direct cloud PUT:', apiSyncErr);
@@ -272,13 +283,13 @@ export async function pushCloudGalleryData(albums, media) {
 
     if (res.ok) {
       const data = await res.json();
-      return { success: true, albums: normalizedAlbums, media: normalizedMedia };
+      return { success: true, albums: normalizedAlbums, media: sanitizedMedia };
     }
   } catch (directPutErr) {
     console.error('Direct cloud database PUT error:', directPutErr);
   }
 
-  return { success: false, albums: normalizedAlbums, media: normalizedMedia };
+  return { success: false, albums: normalizedAlbums, media: sanitizedMedia };
 }
 
 // 4. Create a new album in Cloud Database with required schema

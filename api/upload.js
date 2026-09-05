@@ -3,7 +3,7 @@
 
 import https from 'https';
 
-function createCloudImageBin(dataUrl, filename = 'photo.jpg', retries = 2) {
+function createCloudImageBin(dataUrl, filename = 'photo.jpg', retries = 3) {
   return new Promise((resolve, reject) => {
     const attempt = (remainingRetries) => {
       const payload = JSON.stringify({
@@ -21,7 +21,7 @@ function createCloudImageBin(dataUrl, filename = 'photo.jpg', retries = 2) {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
           'Content-Length': Buffer.byteLength(payload)
         },
-        timeout: 12000
+        timeout: 15000
       }, (res) => {
         let data = '';
         res.on('data', chunk => data += chunk);
@@ -31,13 +31,13 @@ function createCloudImageBin(dataUrl, filename = 'photo.jpg', retries = 2) {
             if (json && json.id) {
               resolve(json.id);
             } else if (remainingRetries > 0) {
-              setTimeout(() => attempt(remainingRetries - 1), 400);
+              setTimeout(() => attempt(remainingRetries - 1), 350);
             } else {
               reject(new Error('No ID in bin response: ' + data));
             }
           } catch (e) {
             if (remainingRetries > 0) {
-              setTimeout(() => attempt(remainingRetries - 1), 400);
+              setTimeout(() => attempt(remainingRetries - 1), 350);
             } else {
               reject(e);
             }
@@ -47,7 +47,7 @@ function createCloudImageBin(dataUrl, filename = 'photo.jpg', retries = 2) {
 
       req.on('error', (err) => {
         if (remainingRetries > 0) {
-          setTimeout(() => attempt(remainingRetries - 1), 400);
+          setTimeout(() => attempt(remainingRetries - 1), 350);
         } else {
           reject(err);
         }
@@ -56,7 +56,7 @@ function createCloudImageBin(dataUrl, filename = 'photo.jpg', retries = 2) {
       req.on('timeout', () => {
         req.destroy();
         if (remainingRetries > 0) {
-          setTimeout(() => attempt(remainingRetries - 1), 400);
+          setTimeout(() => attempt(remainingRetries - 1), 350);
         } else {
           reject(new Error('Bin creation timed out'));
         }
@@ -102,17 +102,11 @@ export default async function handler(req, res) {
     const filename = body.filename || `photo_${Date.now()}.jpg`;
 
     // Store in dedicated cloud storage bin
-    try {
-      const binId = await createCloudImageBin(dataUrl, filename);
-      const imageUrl = `/api/image?id=${binId}`;
-      return res.status(200).json({ success: true, url: imageUrl, binId });
-    } catch (binErr) {
-      console.warn('Dedicated bin creation failed, returning user asset:', binErr.message);
-      // Return user's actual image data instead of any placeholder
-      return res.status(200).json({ success: true, url: dataUrl });
-    }
+    const binId = await createCloudImageBin(dataUrl, filename, 3);
+    const imageUrl = `/api/image?id=${binId}`;
+    return res.status(200).json({ success: true, url: imageUrl, binId });
   } catch (err) {
-    console.error('Image upload handler error:', err);
-    return res.status(500).json({ error: err.message });
+    console.error('Image upload handler error:', err.message);
+    return res.status(500).json({ error: 'Failed to create image cloud bin: ' + err.message });
   }
 }
