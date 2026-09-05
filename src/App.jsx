@@ -24,7 +24,13 @@ export default function App() {
   const [lightboxItem, setLightboxItem] = useState(null);
   const [lightboxList, setLightboxList] = useState([]);
   const [studioOpen, setStudioOpen] = useState(false);
+  const [studioInitialAlbumId, setStudioInitialAlbumId] = useState(null);
   const [toasts, setToasts] = useState([]);
+
+  const handleOpenStudio = (folderId = null) => {
+    setStudioInitialAlbumId(folderId);
+    setStudioOpen(true);
+  };
 
   // ULTRA BUTTERY SMOOTH INERTIA SCROLLING WITH OPTIMIZED LENIS PHYSICS
   useEffect(() => {
@@ -122,7 +128,8 @@ export default function App() {
   // Update activeFolder reference if albums change while inside a folder
   useEffect(() => {
     if (activeFolder) {
-      const updated = albums.find((a) => a.id === activeFolder.id);
+      const activeId = activeFolder.folderId || activeFolder.id;
+      const updated = albums.find((a) => (a.folderId || a.id) === activeId);
       if (updated) {
         setActiveFolder(updated);
       }
@@ -161,7 +168,7 @@ export default function App() {
     <div className="app-container">
       {/* Top Navigation */}
       <Navbar
-        onOpenStudio={() => setStudioOpen(true)}
+        onOpenStudio={() => handleOpenStudio(activeFolder ? (activeFolder.folderId || activeFolder.id) : null)}
         onBackToHome={handleBackToAlbums}
         isInsideFolder={!!activeFolder}
       />
@@ -173,6 +180,7 @@ export default function App() {
           media={media}
           onBack={handleBackToAlbums}
           onOpenMedia={handleOpenLightbox}
+          onOpenStudio={(folderId) => handleOpenStudio(folderId)}
         />
       ) : (
         /* VIEW 2: MAIN HOME EXPERIENCE */
@@ -197,7 +205,7 @@ export default function App() {
 
           {/* About Me & Contact Section */}
           <AboutContactSection
-            onOpenStudio={() => setStudioOpen(true)}
+            onOpenStudio={() => handleOpenStudio()}
             showToast={showToast}
           />
         </main>
@@ -215,7 +223,11 @@ export default function App() {
       {/* Studio CMS Password Protected Modal (appus@07) */}
       <StudioModal
         isOpen={studioOpen}
-        onClose={() => setStudioOpen(false)}
+        onClose={() => {
+          setStudioOpen(false);
+          setStudioInitialAlbumId(null);
+        }}
+        initialAlbumId={studioInitialAlbumId}
         albums={albums}
         media={media}
         onDataChanged={loadData}

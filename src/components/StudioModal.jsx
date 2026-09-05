@@ -28,7 +28,8 @@ export default function StudioModal({
   albums,
   media,
   onDataChanged,
-  showToast
+  showToast,
+  initialAlbumId
 }) {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
     return localStorage.getItem('prasobh_gallery_auth') === 'appus@07';
@@ -39,11 +40,13 @@ export default function StudioModal({
   const [importJsonText, setImportJsonText] = useState('');
   const [isCloudSyncing, setIsCloudSyncing] = useState(false);
   const [uploadProgressText, setUploadProgressText] = useState('');
+  const [uploadProgressPercent, setUploadProgressPercent] = useState(0);
 
   // Batch Media Upload Queue
   const [batchQueue, setBatchQueue] = useState([]);
-  const [selectedAlbumId, setSelectedAlbumId] = useState(albums[0]?.id || 'folder-kyoto');
+  const [selectedAlbumId, setSelectedAlbumId] = useState(initialAlbumId || albums[0]?.id || 'folder-kyoto');
   const [batchCamera, setBatchCamera] = useState('');
+  const [batchTitlePrefix, setBatchTitlePrefix] = useState('');
 
   // Single URL input fallback
   const [singleUrl, setSingleUrl] = useState('');
@@ -71,14 +74,48 @@ export default function StudioModal({
   const [isDragging, setIsDragging] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Keep selectedAlbumId in sync with available albums
+  // Keep selectedAlbumId in sync with initialAlbumId and available albums
   useEffect(() => {
-    if (albums && albums.length > 0) {
-      if (!selectedAlbumId || !albums.some(a => a.id === selectedAlbumId)) {
-        setSelectedAlbumId(albums[0].id);
+    if (initialAlbumId && albums.some(a => (a.folderId || a.id) === initialAlbumId)) {
+      setSelectedAlbumId(initialAlbumId);
+    } else if (albums && albums.length > 0) {
+      if (!selectedAlbumId || !albums.some(a => (a.folderId || a.id) === selectedAlbumId)) {
+        setSelectedAlbumId(albums[0].folderId || albums[0].id);
       }
     }
-  }, [albums, selectedAlbumId]);
+  }, [albums, initialAlbumId, isOpen]);
+
+  // Global Clipboard Paste Listener for Multiple Images
+  useEffect(() => {
+    if (!isOpen || !isAuthenticated) return;
+
+    const handlePasteEvent = (e) => {
+      // If user is typing in a text field for cover URL or caption, avoid intercepting text
+      const target = e.target;
+      const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
+      
+      const items = e.clipboardData?.items;
+      if (!items || items.length === 0) return;
+
+      const imageFiles = [];
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type && items[i].type.startsWith('image/')) {
+          const file = items[i].getAsFile();
+          if (file) imageFiles.push(file);
+        }
+      }
+
+      if (imageFiles.length > 0) {
+        if (activeTab === 'upload') {
+          e.preventDefault();
+          handleMultipleFiles(imageFiles);
+        }
+      }
+    };
+
+    window.addEventListener('paste', handlePasteEvent);
+    return () => window.removeEventListener('paste', handlePasteEvent);
+  }, [isOpen, isAuthenticated, activeTab, selectedAlbumId, batchCamera]);
 
   if (!isOpen) return null;
 
@@ -104,52 +141,59 @@ export default function StudioModal({
     showToast('Locked Studio access.');
   };
 
-  // MULTIPLE FILE UPLOAD HANDLER
+  // HIGH-PERFORMANCE MULTIPLE FILE UPLOAD HANDLER
   const handleMultipleFiles = async (files) => {
     if (!files || files.length === 0) return;
 
     const filesArray = Array.from(files);
-    showToast(`Loading ${filesArray.length} ${filesArray.length === 1 ? 'file' : 'files'}...`);
+    const count = filesArray.length;
+    showToast(`Processing ${count} ${count === 1 ? 'photo' : 'photos'}...`);
 
-    for (let index = 0; index < filesArray.length; index++) {
-      const file = filesArray[index];
-      const isVideo = file.type.startsWith('video');
-      const nameWithoutExt = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
-      const cleanTitle = nameWithoutExt.charAt(0).toUpperCase() + nameWithoutExt.slice(1);
+    const targetFolderId = selectedAlbumId || albums[0]?.folderId || albums[0]?.id || 'folder-kyoto';
 
-      try {
-        let finalUrl;
-        if (isVideo) {
-          finalUrl = await new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.onload = (e) => resolve(e.target.result);
-            reader.onerror = () => resolve('');
-            reader.readAsDataURL(file);
-          });
-        } else {
-          finalUrl = await compressImage(file, 1200, 1200, 0.75);
-        }
+    try {
+      const processedItems = await Promise.all(
+        filesArray.map(async (file, index) => {
+          const isVideo = file.type && file.type.startsWith('video');
+          const nameWithoutExt = file.name ? file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ') : '';
+          const cleanTitle = nameWithoutExt ? (nameWithoutExt.charAt(0).toUpperCase() + nameWithoutExt.slice(1)) : `Photo ${index + 1}`;
 
-        if (finalUrl) {
-          setBatchQueue((prev) => [
-            ...prev,
-            {
-              id: `media-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 6)}`,
-              url: finalUrl,
-              type: isVideo ? 'video' : 'photo',
-              title: cleanTitle || `Photo ${prev.length + 1}`,
-              caption: '',
-              camera: batchCamera || '',
-              albumId: selectedAlbumId || albums[0]?.id || 'folder-kyoto'
-            }
-          ]);
-        }
-      } catch (err) {
-        console.error('Error processing file:', err);
+          let finalUrl = '';
+          if (isVideo) {
+            finalUrl = await new Promise((resolve) => {
+              const reader = new FileReader();
+              reader.onload = (e) => resolve(e.target?.result || '');
+              reader.onerror = () => resolve('');
+              reader.readAsDataURL(file);
+            });
+          } else {
+            finalUrl = await compressImage(file, 1200, 1200, 0.75);
+          }
+
+          if (!finalUrl) return null;
+
+          return {
+            id: `media-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 6)}`,
+            url: finalUrl,
+            type: isVideo ? 'video' : 'photo',
+            title: cleanTitle,
+            caption: '',
+            camera: batchCamera || '',
+            albumId: targetFolderId,
+            folderId: targetFolderId
+          };
+        })
+      );
+
+      const validItems = processedItems.filter(Boolean);
+      if (validItems.length > 0) {
+        setBatchQueue((prev) => [...prev, ...validItems]);
+        showToast(`Added ${validItems.length} ${validItems.length === 1 ? 'photo' : 'photos'} to upload queue.`);
       }
+    } catch (err) {
+      console.error('Error processing multiple files:', err);
+      showToast('Error loading photos: ' + err.message);
     }
-
-    showToast(`Added ${filesArray.length} ${filesArray.length === 1 ? 'photo' : 'photos'} to queue.`);
   };
 
   const handleDrop = (e) => {
@@ -165,6 +209,8 @@ export default function StudioModal({
     e.preventDefault();
     if (!singleUrl.trim()) return;
 
+    const targetFolderId = selectedAlbumId || albums[0]?.folderId || albums[0]?.id || 'folder-kyoto';
+
     setBatchQueue((prev) => [
       ...prev,
       {
@@ -174,7 +220,8 @@ export default function StudioModal({
         title: singleTitle.trim() || `Photo ${prev.length + 1}`,
         caption: '',
         camera: batchCamera || '',
-        albumId: selectedAlbumId || albums[0]?.id || 'folder-kyoto'
+        albumId: targetFolderId,
+        folderId: targetFolderId
       }
     ]);
 
@@ -195,33 +242,64 @@ export default function StudioModal({
     setBatchQueue((prev) => prev.filter((_, i) => i !== index));
   };
 
+  // Batch utilities
+  const handleBatchApplyFolder = (newFolderId) => {
+    setSelectedAlbumId(newFolderId);
+    setBatchQueue((prev) => prev.map((item) => ({ ...item, albumId: newFolderId, folderId: newFolderId })));
+    showToast(`Assigned target folder to all ${batchQueue.length} photos.`);
+  };
+
+  const handleBatchApplyCamera = (newCamera) => {
+    setBatchCamera(newCamera);
+    setBatchQueue((prev) => prev.map((item) => ({ ...item, camera: newCamera })));
+  };
+
+  const handleBatchApplyAutoTitle = (prefix) => {
+    const cleanPrefix = (prefix || '').trim();
+    if (!cleanPrefix) return;
+    setBatchQueue((prev) => prev.map((item, idx) => ({
+      ...item,
+      title: `${cleanPrefix} ${idx + 1}`
+    })));
+    showToast(`Renamed ${batchQueue.length} photos with prefix "${cleanPrefix}".`);
+  };
+
   // PUBLISH ALL BATCH QUEUE ITEMS DIRECTLY TO CLOUD STORAGE & DATABASE
   const handlePublishAllBatch = async () => {
     if (batchQueue.length === 0) return;
 
     setIsSubmitting(true);
-    setUploadProgressText('Uploading photos to Cloud Storage...');
-    const targetAlbum = albums.find((a) => a.id === selectedAlbumId) || albums[0];
+    setUploadProgressPercent(5);
+    setUploadProgressText('Connecting to Cloud Backend...');
+    const defaultAlbum = albums.find((a) => (a.folderId || a.id) === selectedAlbumId) || albums[0];
 
-    const mediaToSave = batchQueue.map((item, idx) => ({
-      id: item.id || `media-${Date.now()}-${idx}`,
-      albumId: item.albumId || targetAlbum?.id || 'folder-kyoto',
-      type: item.type,
-      title: item.title?.trim() || `Frame ${idx + 1}`,
-      location: targetAlbum?.location || '',
-      url: item.url,
-      aspectRatio: 'landscape',
-      date: new Date().getFullYear().toString(),
-      caption: item.caption ? item.caption.trim() : '',
-      exif: {
-        camera: item.camera ? item.camera.trim() : (batchCamera ? batchCamera.trim() : '')
-      },
-      duration: item.type === 'video' ? '0:30' : undefined
-    }));
+    const mediaToSave = batchQueue.map((item, idx) => {
+      const itemAlbumId = item.folderId || item.albumId || defaultAlbum?.folderId || defaultAlbum?.id || 'folder-kyoto';
+      const itemAlbum = albums.find(a => (a.folderId || a.id) === itemAlbumId) || defaultAlbum;
+      
+      return {
+        id: item.id || `media-${Date.now()}-${idx}`,
+        albumId: itemAlbumId,
+        folderId: itemAlbumId,
+        type: item.type || 'photo',
+        title: item.title?.trim() || `Photo ${idx + 1}`,
+        location: itemAlbum?.location || '',
+        url: item.url,
+        aspectRatio: 'landscape',
+        date: new Date().getFullYear().toString(),
+        caption: item.caption ? item.caption.trim() : '',
+        exif: {
+          camera: item.camera ? item.camera.trim() : (batchCamera ? batchCamera.trim() : '')
+        },
+        duration: item.type === 'video' ? '0:30' : undefined
+      };
+    });
 
     try {
       await saveMultipleMediaItems(mediaToSave, (current, total, title) => {
-        setUploadProgressText(`Uploading ${current} of ${total}: "${title}"...`);
+        const pct = Math.max(10, Math.round((current / total) * 100));
+        setUploadProgressPercent(pct);
+        setUploadProgressText(`Uploading ${current} of ${total} (${pct}%): "${title}"...`);
       });
 
       await onDataChanged();
@@ -229,14 +307,16 @@ export default function StudioModal({
       setBatchQueue([]);
       setIsSubmitting(false);
       setUploadProgressText('');
+      setUploadProgressPercent(0);
       showToast(`Published ${count} ${count === 1 ? 'photo' : 'photos'} directly to Cloud Gallery!`);
 
       try {
-        confetti({ particleCount: 50, spread: 65 });
+        confetti({ particleCount: 60, spread: 70, origin: { y: 0.6 } });
       } catch (err) {}
     } catch (err) {
       setIsSubmitting(false);
       setUploadProgressText('');
+      setUploadProgressPercent(0);
       showToast('Error uploading: ' + err.message);
     }
   };
@@ -551,8 +631,8 @@ export default function StudioModal({
               {/* TAB 1: MULTIPLE PHOTO UPLOAD & CAPTION ASSIGNMENT */}
               {activeTab === 'upload' && (
                 <div>
-                  {/* Global Folder & Camera selectors for this batch */}
-                  <div className="form-grid" style={{ marginBottom: '1rem' }}>
+                  {/* Global Folder & Camera selectors for new uploads */}
+                  <div className="form-grid" style={{ marginBottom: '1.25rem' }}>
                     <div className="form-field">
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <label className="form-label">Upload into Folder</label>
@@ -573,7 +653,7 @@ export default function StudioModal({
                       </div>
                       <select
                         value={selectedAlbumId}
-                        onChange={(e) => setSelectedAlbumId(e.target.value)}
+                        onChange={(e) => handleBatchApplyFolder(e.target.value)}
                         className="form-select"
                         id="select-batch-folder"
                       >
@@ -590,13 +670,14 @@ export default function StudioModal({
                     </div>
 
                     <div className="form-field">
-                      <label className="form-label">Camera or Phone (Optional for all)</label>
+                      <label className="form-label">Default Camera / Phone (Optional for all)</label>
                       <input
                         type="text"
                         value={batchCamera}
-                        onChange={(e) => setBatchCamera(e.target.value)}
-                        placeholder="e.g. Leica M11 / iPhone 15 Pro"
+                        onChange={(e) => handleBatchApplyCamera(e.target.value)}
+                        placeholder="e.g. Sony A7IV / Leica M11 / iPhone 15 Pro"
                         className="form-input"
+                        id="input-batch-camera"
                       />
                     </div>
                   </div>
@@ -608,6 +689,7 @@ export default function StudioModal({
                     onDragLeave={() => setIsDragging(false)}
                     onDrop={handleDrop}
                     onClick={() => document.getElementById('studio-multi-file-input').click()}
+                    style={{ position: 'relative', overflow: 'hidden' }}
                   >
                     <input
                       type="file"
@@ -615,14 +697,17 @@ export default function StudioModal({
                       accept="image/*,video/*"
                       multiple
                       style={{ display: 'none' }}
-                      onChange={(e) => handleMultipleFiles(e.target.files)}
+                      onChange={(e) => {
+                        handleMultipleFiles(e.target.files);
+                        e.target.value = '';
+                      }}
                     />
-                    <Layers size={32} color="var(--accent-gold)" style={{ margin: '0 auto 0.4rem' }} />
-                    <h4 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.05rem', marginBottom: '0.2rem' }}>
+                    <Layers size={36} color="var(--accent-gold)" style={{ margin: '0 auto 0.5rem' }} />
+                    <h4 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.15rem', marginBottom: '0.3rem', color: 'var(--text-pure)' }}>
                       Click or Drag & Drop Multiple Photos / Videos
                     </h4>
-                    <p style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
-                      Select photos from your device to publish into "{albums.find(a => a.id === selectedAlbumId)?.title || 'Selected Folder'}". Files are uploaded directly to centralized cloud storage.
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', maxWidth: '520px', margin: '0 auto' }}>
+                      Select multiple photos from your computer or phone to publish into <strong style={{ color: 'var(--accent-gold)' }}>"{albums.find(a => (a.folderId || a.id) === selectedAlbumId)?.title || 'Selected Folder'}"</strong>. You can also paste copied images directly (<kbd style={{ background: 'rgba(255,255,255,0.1)', padding: '2px 5px', borderRadius: '3px' }}>Ctrl+V</kbd>).
                     </p>
                   </div>
 
@@ -636,80 +721,233 @@ export default function StudioModal({
                       className="form-input"
                       style={{ flex: 1 }}
                     />
-                    <button type="submit" className="auth-submit-btn" style={{ width: 'auto', padding: '0.55rem 1rem' }}>
+                    <button type="submit" className="auth-submit-btn" style={{ width: 'auto', padding: '0.55rem 1.1rem' }}>
                       + Add URL
                     </button>
                   </form>
 
-                  {/* BATCH QUEUE CARDS */}
+                  {/* BATCH QUEUE CARDS & BATCH TOOLS */}
                   {batchQueue.length > 0 && (
-                    <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border-subtle)', paddingTop: '1.5rem' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
-                        <h4 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.05rem', color: 'var(--text-pure)' }}>
-                          Photos Ready to Publish ({batchQueue.length})
-                        </h4>
+                    <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border-medium)', paddingTop: '1.5rem' }}>
+                      {/* Batch Queue Header with Badge and Action Buttons */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                          <span style={{
+                            background: 'var(--accent-gold)',
+                            color: '#000',
+                            fontWeight: 800,
+                            fontSize: '0.75rem',
+                            padding: '0.2rem 0.6rem',
+                            borderRadius: '999px',
+                            letterSpacing: '0.05em'
+                          }}>
+                            {batchQueue.length} {batchQueue.length === 1 ? 'PHOTO' : 'PHOTOS'}
+                          </span>
+                          <h4 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.1rem', color: 'var(--text-pure)', margin: 0 }}>
+                            Ready to Publish
+                          </h4>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                          <button
+                            type="button"
+                            onClick={() => document.getElementById('studio-multi-file-input').click()}
+                            style={{
+                              background: 'rgba(212, 175, 55, 0.1)',
+                              border: '1px solid var(--border-gold)',
+                              color: 'var(--accent-gold)',
+                              fontSize: '0.75rem',
+                              padding: '0.35rem 0.75rem',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '0.3rem'
+                            }}
+                          >
+                            <Plus size={13} />
+                            <span>Add More Photos</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setBatchQueue([])}
+                            style={{
+                              background: 'none',
+                              border: '1px solid rgba(239, 68, 68, 0.3)',
+                              color: '#f87171',
+                              fontSize: '0.75rem',
+                              padding: '0.35rem 0.75rem',
+                              borderRadius: '4px',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            Clear Queue
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Quick Auto-Renaming Tool */}
+                      <div style={{
+                        background: 'rgba(255, 255, 255, 0.02)',
+                        border: '1px solid var(--border-subtle)',
+                        padding: '0.85rem 1rem',
+                        borderRadius: '6px',
+                        marginBottom: '1.25rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.75rem',
+                        flexWrap: 'wrap'
+                      }}>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                          Auto-Rename All:
+                        </span>
+                        <input
+                          type="text"
+                          value={batchTitlePrefix}
+                          onChange={(e) => setBatchTitlePrefix(e.target.value)}
+                          placeholder="e.g. Kyoto Expedition"
+                          className="form-input"
+                          style={{ flex: 1, minWidth: '180px', padding: '0.35rem 0.65rem', fontSize: '0.8rem' }}
+                        />
                         <button
-                          onClick={() => setBatchQueue([])}
-                          style={{ background: 'none', border: 'none', color: '#f87171', fontSize: '0.75rem', cursor: 'pointer' }}
+                          type="button"
+                          onClick={() => handleBatchApplyAutoTitle(batchTitlePrefix)}
+                          style={{
+                            background: 'rgba(255, 255, 255, 0.08)',
+                            border: '1px solid var(--border-medium)',
+                            color: 'var(--text-pure)',
+                            fontSize: '0.75rem',
+                            padding: '0.4rem 0.8rem',
+                            borderRadius: '4px',
+                            cursor: 'pointer'
+                          }}
                         >
-                          Clear Queue
+                          Apply Prefix (1, 2, 3...)
                         </button>
                       </div>
 
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem' }}>
+                      {/* Photo Items List */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem', marginBottom: '1.5rem', maxHeight: '420px', overflowY: 'auto', paddingRight: '0.25rem' }}>
                         {batchQueue.map((item, idx) => (
                           <div
                             key={item.id}
                             style={{
                               display: 'grid',
-                              gridTemplateColumns: '80px 1fr 32px',
-                              gap: '1rem',
-                              alignItems: 'start',
+                              gridTemplateColumns: '90px 1fr 34px',
+                              gap: '0.85rem',
+                              alignItems: 'center',
                               background: '#000',
                               border: '1px solid var(--border-subtle)',
-                              padding: '0.85rem',
+                              padding: '0.75rem',
                               borderRadius: '6px'
                             }}
                           >
-                            <img
-                              src={item.url}
-                              alt={item.title}
-                              style={{ width: '80px', height: '60px', objectFit: 'cover', borderRadius: '4px' }}
-                            />
+                            <div style={{ position: 'relative', width: '90px', height: '65px', borderRadius: '4px', overflow: 'hidden' }}>
+                              <img
+                                src={item.url}
+                                alt={item.title}
+                                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                              />
+                              <span style={{
+                                position: 'absolute',
+                                bottom: '3px',
+                                left: '3px',
+                                background: 'rgba(0,0,0,0.75)',
+                                color: '#fff',
+                                fontSize: '0.65rem',
+                                padding: '1px 4px',
+                                borderRadius: '3px',
+                                fontWeight: 600
+                              }}>
+                                #{idx + 1}
+                              </span>
+                            </div>
 
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                              <input
-                                type="text"
-                                value={item.title}
-                                onChange={(e) => updateQueueItem(idx, 'title', e.target.value)}
-                                placeholder="Photo Title"
-                                className="form-input"
-                                style={{ padding: '0.4rem 0.6rem', fontSize: '0.825rem' }}
-                              />
+                              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                <input
+                                  type="text"
+                                  value={item.title}
+                                  onChange={(e) => updateQueueItem(idx, 'title', e.target.value)}
+                                  placeholder="Photo Title"
+                                  className="form-input"
+                                  style={{ flex: 2, minWidth: '130px', padding: '0.35rem 0.6rem', fontSize: '0.825rem' }}
+                                />
+                                <select
+                                  value={item.folderId || item.albumId || selectedAlbumId}
+                                  onChange={(e) => updateQueueItem(idx, 'folderId', e.target.value)}
+                                  className="form-select"
+                                  style={{ flex: 1, minWidth: '120px', padding: '0.35rem 0.5rem', fontSize: '0.75rem' }}
+                                >
+                                  {albums.map((alb) => {
+                                    const albId = alb.folderId || alb.id;
+                                    const albTitle = alb.folderName || alb.title;
+                                    return (
+                                      <option key={albId} value={albId}>
+                                        {albTitle}
+                                      </option>
+                                    );
+                                  })}
+                                </select>
+                              </div>
                               <input
                                 type="text"
                                 value={item.caption}
                                 onChange={(e) => updateQueueItem(idx, 'caption', e.target.value)}
-                                placeholder="Assign caption (Optional — can be added afterwards)"
+                                placeholder="Assign caption / story (Optional)"
                                 className="form-input"
-                                style={{ padding: '0.4rem 0.6rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}
+                                style={{ padding: '0.35rem 0.6rem', fontSize: '0.8rem', color: 'var(--text-secondary)' }}
                               />
                             </div>
 
                             <button
+                              type="button"
                               onClick={() => removeQueueItem(idx)}
-                              style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', padding: '0.2rem' }}
+                              style={{
+                                background: 'none',
+                                border: 'none',
+                                color: '#f87171',
+                                cursor: 'pointer',
+                                padding: '0.4rem',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                              }}
                               title="Remove from queue"
                             >
-                              <Trash2 size={15} />
+                              <Trash2 size={16} />
                             </button>
                           </div>
                         ))}
                       </div>
 
-                      {uploadProgressText && (
-                        <div style={{ color: 'var(--accent-gold)', fontSize: '0.8rem', marginBottom: '0.75rem', textAlign: 'center' }}>
-                          {uploadProgressText}
+                      {/* Animated Progress Bar during Batch Upload */}
+                      {isSubmitting && (
+                        <div style={{ marginBottom: '1.25rem' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                            <span style={{ color: 'var(--accent-gold)', fontSize: '0.8rem', fontWeight: 600 }}>
+                              {uploadProgressText}
+                            </span>
+                            <span style={{ color: 'var(--text-primary)', fontSize: '0.8rem', fontWeight: 700 }}>
+                              {uploadProgressPercent}%
+                            </span>
+                          </div>
+                          <div style={{
+                            width: '100%',
+                            height: '6px',
+                            background: 'rgba(255, 255, 255, 0.1)',
+                            borderRadius: '999px',
+                            overflow: 'hidden'
+                          }}>
+                            <div style={{
+                              width: `${uploadProgressPercent}%`,
+                              height: '100%',
+                              background: 'linear-gradient(90deg, #d4af37, #f3e5ab)',
+                              borderRadius: '999px',
+                              transition: 'width 0.3s ease'
+                            }} />
+                          </div>
                         </div>
                       )}
 
@@ -718,9 +956,19 @@ export default function StudioModal({
                         disabled={isSubmitting}
                         className="auth-submit-btn"
                         id="btn-publish-batch-submit"
-                        style={{ padding: '0.9rem', fontSize: '0.88rem' }}
+                        style={{ padding: '0.95rem', fontSize: '0.9rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
                       >
-                        {isSubmitting ? (uploadProgressText || 'Uploading to Cloud Storage...') : `Publish All ${batchQueue.length} ${batchQueue.length === 1 ? 'Photo' : 'Photos'} to Cloud Gallery`}
+                        {isSubmitting ? (
+                          <>
+                            <RefreshCw size={16} className="spin-anim" />
+                            <span>{uploadProgressText || 'Uploading to Cloud Gallery...'}</span>
+                          </>
+                        ) : (
+                          <>
+                            <Upload size={16} />
+                            <span>Publish All {batchQueue.length} {batchQueue.length === 1 ? 'Photo' : 'Photos'} to Cloud Gallery</span>
+                          </>
+                        )}
                       </button>
                     </div>
                   )}

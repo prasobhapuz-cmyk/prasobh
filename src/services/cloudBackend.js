@@ -395,47 +395,80 @@ export async function deleteCloudAlbum(albumId) {
   return true;
 }
 
-// 7. Batch Upload and Save Media Items to Cloud Storage & Database
+// 7. High-Speed Batch Upload and Save Media Items to Cloud Storage & Database
 export async function saveCloudMediaItems(itemsList, onProgress) {
+  if (!itemsList || itemsList.length === 0) return [];
   const current = await fetchCloudGalleryData();
-  const processedItems = [];
+  const totalCount = itemsList.length;
+  let completedCount = 0;
 
-  for (let i = 0; i < itemsList.length; i++) {
-    const item = itemsList[i];
-    if (onProgress) {
-      onProgress(i + 1, itemsList.length, item.title || item.name || `Photo ${i + 1}`);
+  // Process items in parallel batches with concurrency of 3
+  const concurrency = 3;
+  const processedItems = new Array(totalCount);
+
+  // Worker pool for concurrent uploads
+  const queue = itemsList.map((item, index) => ({ item, index }));
+  
+  const worker = async () => {
+    while (queue.length > 0) {
+      const { item, index } = queue.shift();
+      const currentTitle = item.title || item.name || `Photo ${index + 1}`;
+      
+      if (onProgress) {
+        onProgress(completedCount, totalCount, currentTitle);
+      }
+
+      let finalMediaUrl = item.url;
+      if (finalMediaUrl && finalMediaUrl.startsWith('data:')) {
+        try {
+          finalMediaUrl = await uploadAssetToCloud(finalMediaUrl, `${item.title || 'photo'}_${Date.now()}_${index}.jpg`);
+        } catch (uploadErr) {
+          console.warn(`Upload error on item ${index}:`, uploadErr);
+        }
+      }
+
+      const targetFolderId = item.folderId || item.albumId || current.albums[0]?.id || 'folder-kyoto';
+
+      processedItems[index] = {
+        ...item,
+        id: item.mediaId || item.id || `media-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 6)}`,
+        mediaId: item.mediaId || item.id || `media-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 6)}`,
+        albumId: targetFolderId,
+        folderId: targetFolderId,
+        userId: item.userId || 'user_prasobh_appus07',
+        type: item.type || 'photo',
+        title: item.title || `Photo ${index + 1}`,
+        location: item.location || '',
+        url: finalMediaUrl,
+        aspectRatio: item.aspectRatio || 'landscape',
+        createdAt: item.createdAt || new Date().toISOString(),
+        caption: item.caption || '',
+        exif: item.exif || { camera: '' }
+      };
+
+      completedCount++;
+      if (onProgress) {
+        onProgress(completedCount, totalCount, currentTitle);
+      }
     }
+  };
 
-    let finalMediaUrl = item.url;
-    if (finalMediaUrl && finalMediaUrl.startsWith('data:')) {
-      finalMediaUrl = await uploadAssetToCloud(finalMediaUrl, `${item.title || 'photo'}_${Date.now()}.jpg`);
-    }
-
-    const targetFolderId = item.folderId || item.albumId || current.albums[0]?.id || 'folder-kyoto';
-
-    processedItems.push({
-      ...item,
-      id: item.mediaId || item.id || `media-${Date.now()}-${i}`,
-      mediaId: item.mediaId || item.id || `media-${Date.now()}-${i}`,
-      albumId: targetFolderId,
-      folderId: targetFolderId,
-      userId: item.userId || 'user_prasobh_appus07',
-      type: item.type || 'photo',
-      title: item.title || `Photo ${i + 1}`,
-      location: item.location || '',
-      url: finalMediaUrl,
-      aspectRatio: item.aspectRatio || 'landscape',
-      createdAt: item.createdAt || new Date().toISOString(),
-      caption: item.caption || '',
-      exif: item.exif || { camera: '' }
-    });
+  const pool = [];
+  const activeWorkers = Math.min(concurrency, totalCount);
+  for (let w = 0; w < activeWorkers; w++) {
+    pool.push(worker());
   }
+  await Promise.all(pool);
 
+  const validProcessed = processedItems.filter(Boolean);
   const existingMedia = current.media || [];
-  const updatedMedia = [...existingMedia.filter(m => !processedItems.some(p => p.id === m.id)), ...processedItems];
+  const updatedMedia = [...existingMedia.filter(m => !validProcessed.some(p => p.id === m.id)), ...validProcessed];
+
+  // Optimistic subscriber notification for immediate UI rendering
+  notifySubscribers({ albums: current.albums || [], media: updatedMedia });
 
   await pushCloudGalleryData(current.albums || [], updatedMedia);
-  return processedItems;
+  return validProcessed;
 }
 
 // 8. Update Media Item metadata (caption, title, camera) in Cloud Database
