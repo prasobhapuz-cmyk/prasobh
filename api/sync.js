@@ -81,7 +81,7 @@ function fetchFromCloud() {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
         'Accept': 'application/json'
       },
-      timeout: 6000
+      timeout: 10000
     }, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
@@ -113,50 +113,64 @@ function fetchFromCloud() {
   });
 }
 
-function pushToCloud(payload) {
+function pushToCloud(payload, retries = 2) {
   return new Promise((resolve) => {
-    const sanitized = sanitizePayload(payload);
-    memoryCache = sanitized;
+    const attempt = (remainingRetries) => {
+      const sanitized = sanitizePayload(payload);
+      memoryCache = sanitized;
 
-    const dataString = JSON.stringify(sanitized);
-    const u = new URL(CLOUD_STORAGE_URL);
+      const dataString = JSON.stringify(sanitized);
+      const u = new URL(CLOUD_STORAGE_URL);
 
-    const req = https.request({
-      hostname: u.hostname,
-      path: u.pathname,
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-        'Content-Length': Buffer.byteLength(dataString)
-      },
-      timeout: 8000
-    }, (res) => {
-      let resBody = '';
-      res.on('data', chunk => resBody += chunk);
-      res.on('end', () => {
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          resolve(true);
+      const req = https.request({
+        hostname: u.hostname,
+        path: u.pathname,
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+          'Content-Length': Buffer.byteLength(dataString)
+        },
+        timeout: 12000
+      }, (res) => {
+        let resBody = '';
+        res.on('data', chunk => resBody += chunk);
+        res.on('end', () => {
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            resolve(true);
+          } else if (remainingRetries > 0) {
+            setTimeout(() => attempt(remainingRetries - 1), 300);
+          } else {
+            console.warn('ExtendsClass PUT returned status:', res.statusCode, resBody);
+            resolve(false);
+          }
+        });
+      });
+
+      req.on('error', (err) => {
+        if (remainingRetries > 0) {
+          setTimeout(() => attempt(remainingRetries - 1), 300);
         } else {
-          console.warn('ExtendsClass PUT returned status:', res.statusCode, resBody);
+          console.warn('ExtendsClass PUT network error:', err.message);
           resolve(false);
         }
       });
-    });
 
-    req.on('error', (err) => {
-      console.warn('ExtendsClass PUT network error:', err.message);
-      resolve(false);
-    });
+      req.on('timeout', () => {
+        req.destroy();
+        if (remainingRetries > 0) {
+          setTimeout(() => attempt(remainingRetries - 1), 300);
+        } else {
+          console.warn('ExtendsClass PUT timed out');
+          resolve(false);
+        }
+      });
 
-    req.on('timeout', () => {
-      req.destroy();
-      console.warn('ExtendsClass PUT timed out');
-      resolve(false);
-    });
+      req.write(dataString);
+      req.end();
+    };
 
-    req.write(dataString);
-    req.end();
+    attempt(retries);
   });
 }
 

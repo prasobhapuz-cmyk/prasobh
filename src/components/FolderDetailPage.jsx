@@ -180,7 +180,7 @@ export default function FolderDetailPage({ album, media, onBack, onOpenMedia, on
             title="Add Photos to this Folder"
           >
             <Plus size={14} />
-            <span>+ Add Photos</span>
+            <span>Add Photos</span>
           </button>
         </div>
       </div>
@@ -224,7 +224,7 @@ export default function FolderDetailPage({ album, media, onBack, onOpenMedia, on
               id="btn-empty-add-photos"
             >
               <Layers size={16} />
-              <span>+ Select Photos for {albumTitle}</span>
+              <span>Select Photos for {albumTitle}</span>
             </button>
           </div>
         ) : (

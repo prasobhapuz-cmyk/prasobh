@@ -144,7 +144,17 @@ export async function fetchCloudGalleryData() {
               folderId: m.folderId || m.albumId,
               userId: m.userId || 'user_prasobh_appus07'
             }));
-            const result = { albums: normalizedAlbums, media: normalizedMedia };
+
+            // Merge protection: Never lose items present in local session
+            const mergedMedia = [...normalizedMedia];
+            (inMemoryData?.media || []).forEach(localItem => {
+              const localId = localItem.mediaId || localItem.id;
+              if (localId && !mergedMedia.some(m => (m.mediaId || m.id) === localId)) {
+                mergedMedia.push(localItem);
+              }
+            });
+
+            const result = { albums: normalizedAlbums, media: mergedMedia };
             inMemoryData = result;
             notifySubscribers(result);
             return result;
@@ -179,7 +189,17 @@ export async function fetchCloudGalleryData() {
           folderId: m.folderId || m.albumId,
           userId: m.userId || 'user_prasobh_appus07'
         }));
-        const result = { albums: normalizedAlbums, media: normalizedMedia };
+
+        // Merge protection: Never lose items present in local session
+        const mergedMedia = [...normalizedMedia];
+        (inMemoryData?.media || []).forEach(localItem => {
+          const localId = localItem.mediaId || localItem.id;
+          if (localId && !mergedMedia.some(m => (m.mediaId || m.id) === localId)) {
+            mergedMedia.push(localItem);
+          }
+        });
+
+        const result = { albums: normalizedAlbums, media: mergedMedia };
         inMemoryData = result;
         notifySubscribers(result);
         return result;

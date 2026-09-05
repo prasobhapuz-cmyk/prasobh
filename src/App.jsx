@@ -72,15 +72,6 @@ export default function App() {
       if (localMedia) {
         setMedia(localMedia);
       }
-
-      // Sync latest data from central cloud database so any new folders/images appear instantly on all devices
-      const cloudData = await syncFromCloud();
-      if (cloudData && cloudData.albums && cloudData.albums.length > 0) {
-        setAlbums(cloudData.albums);
-        if (cloudData.media) {
-          setMedia(cloudData.media);
-        }
-      }
     } catch (err) {
       console.error('Failed to load gallery data:', err);
     }

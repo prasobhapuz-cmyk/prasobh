@@ -889,7 +889,7 @@ export default function StudioModal({
                             textDecoration: 'underline'
                           }}
                         >
-                          + New Folder
+                          New Folder
                         </button>
                       </div>
                       <select
@@ -987,7 +987,7 @@ export default function StudioModal({
                       }}
                     >
                       <Upload size={17} />
-                      <span>+ Choose Multiple Photos</span>
+                      <span>Choose Multiple Photos</span>
                     </button>
                   </div>
 
@@ -1452,7 +1452,7 @@ export default function StudioModal({
                         <>
                           <FolderPlus size={16} />
                           <span>
-                            + Create Folder {newFolderPhotos.length > 0 ? `& Upload ${newFolderPhotos.length} ${newFolderPhotos.length === 1 ? 'Photo' : 'Photos'}` : ''} in Cloud
+                            Create Folder {newFolderPhotos.length > 0 ? `& Upload ${newFolderPhotos.length} ${newFolderPhotos.length === 1 ? 'Photo' : 'Photos'}` : ''} in Cloud
                           </span>
                         </>
                       )}
