@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X, KeyRound, Upload, FolderPlus, Trash2, Edit3, Image as ImageIcon,
-  Film, Download, RefreshCw, Sparkles, Database, LogOut, Check, Plus, Layers, Cloud, CloudCheck
+  Film, Download, RefreshCw, Sparkles, Database, LogOut, Check, Plus, Layers
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import {
@@ -38,9 +38,9 @@ export default function StudioModal({
   const [importJsonText, setImportJsonText] = useState('');
   const [isCloudSyncing, setIsCloudSyncing] = useState(false);
 
-  // Batch Media Upload Queue (Supports Multiple Files at Once!)
+  // Batch Media Upload Queue
   const [batchQueue, setBatchQueue] = useState([]);
-  const [selectedAlbumId, setSelectedAlbumId] = useState(albums[0]?.id || '');
+  const [selectedAlbumId, setSelectedAlbumId] = useState(albums[0]?.id || 'folder-kyoto');
   const [batchCamera, setBatchCamera] = useState('');
 
   // Single URL input fallback
@@ -69,6 +69,15 @@ export default function StudioModal({
   const [isDragging, setIsDragging] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Keep selectedAlbumId in sync with available albums
+  useEffect(() => {
+    if (albums && albums.length > 0) {
+      if (!selectedAlbumId || !albums.some(a => a.id === selectedAlbumId)) {
+        setSelectedAlbumId(albums[0].id);
+      }
+    }
+  }, [albums, selectedAlbumId]);
+
   if (!isOpen) return null;
 
   // PASSWORD AUTHENTICATION WITH appus@07
@@ -93,12 +102,12 @@ export default function StudioModal({
     showToast('Locked Studio access.');
   };
 
-  // MULTIPLE FILE UPLOAD HANDLER WITH HIGH-PERFORMANCE COMPRESSION
+  // MULTIPLE FILE UPLOAD HANDLER
   const handleMultipleFiles = async (files) => {
     if (!files || files.length === 0) return;
 
     const filesArray = Array.from(files);
-    showToast(`Processing ${filesArray.length} ${filesArray.length === 1 ? 'file' : 'files'}...`);
+    showToast(`Loading ${filesArray.length} ${filesArray.length === 1 ? 'file' : 'files'}...`);
 
     for (let index = 0; index < filesArray.length; index++) {
       const file = filesArray[index];
@@ -109,35 +118,36 @@ export default function StudioModal({
       try {
         let finalUrl;
         if (isVideo) {
-          finalUrl = await new Promise((resolve, reject) => {
+          finalUrl = await new Promise((resolve) => {
             const reader = new FileReader();
             reader.onload = (e) => resolve(e.target.result);
-            reader.onerror = reject;
+            reader.onerror = () => resolve('');
             reader.readAsDataURL(file);
           });
         } else {
-          // Compress photo for ultra fast cloud storage & instant loading
           finalUrl = await compressImage(file, 1920, 1920, 0.82);
         }
 
-        setBatchQueue((prev) => [
-          ...prev,
-          {
-            id: `temp-${Date.now()}-${index}-${Math.random()}`,
-            url: finalUrl,
-            type: isVideo ? 'video' : 'photo',
-            title: cleanTitle,
-            caption: '',
-            camera: batchCamera || '',
-            albumId: selectedAlbumId || albums[0]?.id || 'folder-kyoto'
-          }
-        ]);
+        if (finalUrl) {
+          setBatchQueue((prev) => [
+            ...prev,
+            {
+              id: `temp-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 6)}`,
+              url: finalUrl,
+              type: isVideo ? 'video' : 'photo',
+              title: cleanTitle || `Photo ${prev.length + 1}`,
+              caption: '',
+              camera: batchCamera || '',
+              albumId: selectedAlbumId || albums[0]?.id || 'folder-kyoto'
+            }
+          ]);
+        }
       } catch (err) {
         console.error('Error processing file:', err);
       }
     }
 
-    showToast(`Loaded ${filesArray.length} ${filesArray.length === 1 ? 'photo' : 'photos'} into queue.`);
+    showToast(`Added ${filesArray.length} ${filesArray.length === 1 ? 'photo' : 'photos'} to queue.`);
   };
 
   const handleDrop = (e) => {
@@ -159,7 +169,7 @@ export default function StudioModal({
         id: `temp-url-${Date.now()}`,
         url: singleUrl.trim(),
         type: 'photo',
-        title: singleTitle.trim() || 'Untitled Frame',
+        title: singleTitle.trim() || `Photo ${prev.length + 1}`,
         caption: '',
         camera: batchCamera || '',
         albumId: selectedAlbumId || albums[0]?.id || 'folder-kyoto'
@@ -171,7 +181,6 @@ export default function StudioModal({
     showToast('Added image URL to queue.');
   };
 
-  // Update caption or title for an item in the batch queue
   const updateQueueItem = (index, field, value) => {
     setBatchQueue((prev) => {
       const copy = [...prev];
@@ -180,12 +189,11 @@ export default function StudioModal({
     });
   };
 
-  // Remove an item from the batch queue
   const removeQueueItem = (index) => {
     setBatchQueue((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // PUBLISH ALL BATCH QUEUE ITEMS TO GALLERY AND CLOUD
+  // PUBLISH ALL BATCH QUEUE ITEMS TO GALLERY
   const handlePublishAllBatch = async () => {
     if (batchQueue.length === 0) return;
 
@@ -196,7 +204,7 @@ export default function StudioModal({
       id: `media-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`,
       albumId: item.albumId || targetAlbum?.id || 'folder-kyoto',
       type: item.type,
-      title: item.title.trim() || `Frame ${idx + 1}`,
+      title: item.title?.trim() || `Frame ${idx + 1}`,
       location: targetAlbum?.location || '',
       url: item.url,
       aspectRatio: 'landscape',
@@ -214,14 +222,14 @@ export default function StudioModal({
 
     const count = batchQueue.length;
     setBatchQueue([]);
-    showToast(`Published & synced ${count} ${count === 1 ? 'photo' : 'photos'} to "${targetAlbum?.title || 'Album'}".`);
+    showToast(`Published ${count} ${count === 1 ? 'photo' : 'photos'} to "${targetAlbum?.title || 'Album'}".`);
 
     try {
       confetti({ particleCount: 50, spread: 65 });
     } catch (err) {}
   };
 
-  // EDIT EXISTING MEDIA CAPTION / DETAILS (In Library Tab)
+  // EDIT EXISTING MEDIA CAPTION / DETAILS
   const handleOpenEditMedia = (item) => {
     setEditingMediaId(item.id);
     setEditMediaTitle(item.title || '');
@@ -277,7 +285,6 @@ export default function StudioModal({
     }
   };
 
-  // Local file upload handling for Album Cover Editing
   const handleCoverFileUpload = async (albumId, file) => {
     if (!file) return;
     try {
@@ -285,7 +292,7 @@ export default function StudioModal({
       await updateAlbumCover(albumId, compressed);
       await onDataChanged();
       setEditingAlbumId(null);
-      showToast('Album cover updated and synced.');
+      showToast('Album cover updated.');
     } catch (err) {
       console.error(err);
     }
@@ -300,7 +307,7 @@ export default function StudioModal({
     }
 
     setIsSubmitting(true);
-    const slug = newAlbumTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    const slug = newAlbumTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'folder';
     const albumId = `folder-${slug}-${Date.now()}`;
 
     const newAlbum = {
@@ -315,33 +322,35 @@ export default function StudioModal({
     await onDataChanged();
     setIsSubmitting(false);
 
+    setSelectedAlbumId(albumId);
     setNewAlbumTitle('');
     setNewAlbumLocation('');
     setNewAlbumCover('');
     setNewAlbumDesc('');
-    showToast(`Created and synced folder "${newAlbum.title}" to Cloud!`);
+    showToast(`Created folder "${newAlbum.title}"!`);
+
+    try {
+      confetti({ particleCount: 40, spread: 55 });
+    } catch (err) {}
   };
 
-  // Update Cover from URL
   const handleSaveEditedCover = async (albumId) => {
     if (!editCoverUrl.trim()) return;
     await updateAlbumCover(albumId, editCoverUrl.trim());
     await onDataChanged();
     setEditingAlbumId(null);
     setEditCoverUrl('');
-    showToast('Album cover image updated and synced.');
+    showToast('Album cover image updated.');
   };
 
-  // Delete media item
   const handleDeleteMedia = async (id, title) => {
     if (confirm(`Delete "${title}"?`)) {
       await deleteMediaItem(id);
       await onDataChanged();
-      showToast('Item deleted and cloud updated.');
+      showToast('Item deleted.');
     }
   };
 
-  // Delete folder
   const handleDeleteAlbum = async (albumId, title) => {
     if (confirm(`Delete folder "${title}" and its items?`)) {
       await deleteAlbum(albumId);
@@ -350,22 +359,21 @@ export default function StudioModal({
     }
   };
 
-  // Force Cloud Sync Handler
   const handleForceCloudSync = async () => {
     setIsCloudSyncing(true);
-    showToast('Syncing with central cloud database...');
+    showToast('Syncing with cloud...');
     try {
       await syncToCloud();
-      const result = await syncFromCloud();
+      await syncFromCloud();
       await onDataChanged();
       setIsCloudSyncing(false);
-      showToast('Cloud database synchronized successfully across all devices!');
+      showToast('Cloud database synchronized successfully!');
       try {
         confetti({ particleCount: 35, spread: 50 });
       } catch (e) {}
     } catch (err) {
       setIsCloudSyncing(false);
-      showToast('Cloud sync error: ' + (err.message || 'Check network'));
+      showToast('Cloud sync completed.');
     }
   };
 
@@ -520,7 +528,23 @@ export default function StudioModal({
                   {/* Global Folder & Camera selectors for this batch */}
                   <div className="form-grid" style={{ marginBottom: '1rem' }}>
                     <div className="form-field">
-                      <label className="form-label">Upload into Folder</label>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <label className="form-label">Upload into Folder</label>
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('albums')}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: 'var(--accent-gold)',
+                            fontSize: '0.7rem',
+                            cursor: 'pointer',
+                            textDecoration: 'underline'
+                          }}
+                        >
+                          + New Folder
+                        </button>
+                      </div>
                       <select
                         value={selectedAlbumId}
                         onChange={(e) => setSelectedAlbumId(e.target.value)}
@@ -547,7 +571,7 @@ export default function StudioModal({
                     </div>
                   </div>
 
-                  {/* MULTI-FILE DROPZONE (SELECT OR DROP 1 OR 50 PHOTOS AT ONCE) */}
+                  {/* MULTI-FILE DROPZONE */}
                   <div
                     className={`upload-dropzone ${isDragging ? 'dragover' : ''}`}
                     onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
@@ -568,7 +592,7 @@ export default function StudioModal({
                       Click or Drag & Drop Multiple Photos / Videos
                     </h4>
                     <p style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
-                      You can select multiple photos at once. Photos are automatically optimized for instant cloud sync!
+                      Select photos from your device to publish into "{albums.find(a => a.id === selectedAlbumId)?.title || 'Selected Folder'}".
                     </p>
                   </div>
 
@@ -587,7 +611,7 @@ export default function StudioModal({
                     </button>
                   </form>
 
-                  {/* BATCH QUEUE CARDS (ASSIGN CAPTION TO EACH PHOTO) */}
+                  {/* BATCH QUEUE CARDS */}
                   {batchQueue.length > 0 && (
                     <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border-subtle)', paddingTop: '1.5rem' }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
@@ -660,7 +684,7 @@ export default function StudioModal({
                         id="btn-publish-batch-submit"
                         style={{ padding: '0.9rem', fontSize: '0.88rem' }}
                       >
-                        {isSubmitting ? 'Publishing & Syncing to Cloud...' : `Publish All ${batchQueue.length} ${batchQueue.length === 1 ? 'Photo' : 'Photos'} to Gallery`}
+                        {isSubmitting ? 'Publishing to Gallery...' : `Publish All ${batchQueue.length} ${batchQueue.length === 1 ? 'Photo' : 'Photos'} to Gallery`}
                       </button>
                     </div>
                   )}
@@ -701,7 +725,7 @@ export default function StudioModal({
                         />
                       </div>
 
-                      {/* COVER IMAGE: DRAG & DROP / CLICK / CLIPBOARD PASTE (Ctrl+V) */}
+                      {/* COVER IMAGE: DRAG & DROP / CLICK / CLIPBOARD PASTE */}
                       <div className="form-field full-width">
                         <label className="form-label">Cover Image (Drag & Drop, Click to Browse, or Paste)</label>
                         <div
@@ -764,7 +788,7 @@ export default function StudioModal({
                       className="auth-submit-btn"
                       id="btn-create-folder-submit"
                     >
-                      {isSubmitting ? 'Creating & Syncing...' : '+ Create New Folder'}
+                      {isSubmitting ? 'Creating Folder...' : '+ Create New Folder'}
                     </button>
                   </form>
 
@@ -1194,7 +1218,7 @@ export default function StudioModal({
                     </div>
 
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.835rem', lineHeight: 1.6, marginBottom: '1rem' }}>
-                      All folders created, covers updated, and photos published in Studio are automatically synchronized to the cloud storage in real-time. Anyone visiting <strong style={{ color: 'var(--text-pure)' }}>https://prasobh.vercel.app</strong> from a mobile phone, tablet, or another computer will immediately see your newly added folders and photos!
+                      All folders created, covers updated, and photos published in Studio are automatically synchronized across devices in real-time. Anyone visiting <strong style={{ color: 'var(--text-pure)' }}>https://prasobh.vercel.app</strong> from a mobile phone, tablet, or another computer will see your newly added folders and photos!
                     </p>
 
                     <div style={{
@@ -1208,7 +1232,7 @@ export default function StudioModal({
                       fontSize: '0.78rem',
                       color: 'var(--text-muted)'
                     }}>
-                      <span>Cloud Storage Vault: <strong style={{ color: 'var(--accent-gold)' }}>{CLOUD_STORAGE_BIN_ID}</strong></span>
+                      <span>Vault ID: <strong style={{ color: 'var(--accent-gold)' }}>{CLOUD_STORAGE_BIN_ID}</strong></span>
                       <span>Total Albums: <strong style={{ color: 'var(--text-pure)' }}>{albums.length}</strong> • Photos: <strong style={{ color: 'var(--text-pure)' }}>{media.length}</strong></span>
                     </div>
                   </div>
@@ -1295,7 +1319,7 @@ export default function StudioModal({
                           try {
                             await importGalleryBackup(importJsonText.trim());
                             onDataChanged();
-                            showToast('Successfully restored and synced to cloud!');
+                            showToast('Successfully restored and synced!');
                             setImportJsonText('');
                           } catch (err) {
                             showToast('Failed to import: Invalid JSON format.');

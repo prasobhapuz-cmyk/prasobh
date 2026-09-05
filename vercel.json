@@ -20,6 +20,9 @@
     }
   ],
   "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
+    {
+      "source": "/((?!api/|hero_video_frames/|assets/).*)",
+      "destination": "/index.html"
+    }
   ]
 }
