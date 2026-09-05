@@ -115,7 +115,9 @@ export default function LightboxModal({ activeItem, allItems, onClose, onNavigat
             {activeItem.date && <span>• {activeItem.date}</span>}
           </div>
 
-          <h3 className="lightbox-title">{activeItem.title}</h3>
+          {activeItem.title && !activeItem.title.startsWith('temp-') && (
+            <h3 className="lightbox-title">{activeItem.title}</h3>
+          )}
           {activeItem.caption && (
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', fontWeight: 300, lineHeight: 1.5 }}>
               {activeItem.caption}

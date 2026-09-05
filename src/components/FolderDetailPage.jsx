@@ -93,15 +93,16 @@ export default function FolderDetailPage({ album, media, onBack, onOpenMedia }) 
                   </div>
                 )}
 
-                <div className="folder-media-caption-bar">
-                  <div className="folder-media-title">{item.title}</div>
-                  {item.exif?.camera && (
-                    <div className="folder-media-meta">{item.exif.camera}</div>
-                  )}
-                  {item.caption && (
-                    <div className="folder-media-note">{item.caption}</div>
-                  )}
-                </div>
+                {(item.caption || item.exif?.camera) && (
+                  <div className="folder-media-caption-bar">
+                    {item.exif?.camera && (
+                      <div className="folder-media-meta">{item.exif.camera}</div>
+                    )}
+                    {item.caption && (
+                      <div className="folder-media-note">{item.caption}</div>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>
