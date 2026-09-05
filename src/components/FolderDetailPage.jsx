@@ -79,7 +79,7 @@ export default function FolderDetailPage({ album, media, onBack, onOpenMedia, on
               reader.readAsDataURL(file);
             });
           } else {
-            finalUrl = await compressImage(file, 1200, 1200, 0.75);
+            finalUrl = await compressImage(file, 1080, 1080, 0.72);
           }
 
           if (!finalUrl) return null;

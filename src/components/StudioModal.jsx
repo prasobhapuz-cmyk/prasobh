@@ -177,7 +177,7 @@ export default function StudioModal({
               reader.readAsDataURL(file);
             });
           } else {
-            finalUrl = await compressImage(file, 1200, 1200, 0.75);
+            finalUrl = await compressImage(file, 1080, 1080, 0.72);
           }
 
           if (!finalUrl) return null;
@@ -314,7 +314,7 @@ export default function StudioModal({
               reader.readAsDataURL(file);
             });
           } else {
-            finalUrl = await compressImage(file, 1200, 1200, 0.75);
+            finalUrl = await compressImage(file, 1080, 1080, 0.72);
           }
 
           if (!finalUrl) return null;
@@ -931,7 +931,7 @@ export default function StudioModal({
                     multiple={true}
                     style={{ display: 'none' }}
                     onChange={(e) => {
-                      handleMultipleFiles(e.target.files);
+                      handleDirectUploadMultipleFiles(e.target.files);
                       e.target.value = '';
                     }}
                   />
@@ -944,7 +944,7 @@ export default function StudioModal({
                       e.preventDefault();
                       setIsDragging(false);
                       if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                        handleMultipleFiles(e.dataTransfer.files);
+                        handleDirectUploadMultipleFiles(e.dataTransfer.files);
                       }
                     }}
                     onClick={() => document.getElementById('studio-multi-file-input').click()}
