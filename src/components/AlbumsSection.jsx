@@ -103,20 +103,22 @@ export default function AlbumsSection({ albums, media, onOpenFolder }) {
       {/* ZIGZAG ALTERNATING FOLDERS (1st Top-Left, 2nd Right-Bottom, 3rd Left, 4th Right...) */}
       <div className="zigzag-folders-wrapper">
         {albums.map((album, index) => {
-          const albumMedia = media.filter((m) => m.albumId === album.id);
+          const albumId = album.folderId || album.id;
+          const albumTitle = album.folderName || album.title;
+          const albumMedia = media.filter((m) => m.albumId === albumId || m.folderId === albumId || m.albumId === album.id);
           const isEven = index % 2 === 0;
 
           return (
             <div
-              key={album.id}
+              key={albumId}
               className={`zigzag-folder-card ${isEven ? 'pos-left' : 'pos-right'}`}
               onClick={() => onOpenFolder(album)}
-              id={`folder-${album.id}`}
+              id={`folder-${albumId}`}
             >
               <div className="folder-image-frame">
                 <img
                   src={album.coverImage}
-                  alt={album.title}
+                  alt={albumTitle}
                   className="folder-cover-img"
                   loading="lazy"
                 />
@@ -135,7 +137,7 @@ export default function AlbumsSection({ albums, media, onOpenFolder }) {
                 </div>
 
                 <div className="folder-bottom-info">
-                  <h3 className="folder-card-heading">{album.title}</h3>
+                  <h3 className="folder-card-heading">{albumTitle}</h3>
                   {album.description && (
                     <p className="folder-card-caption">{album.description}</p>
                   )}

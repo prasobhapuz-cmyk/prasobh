@@ -17,7 +17,9 @@ export default function FolderDetailPage({ album, media, onBack, onOpenMedia }) 
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  const folderMedia = media.filter((m) => m.albumId === album.id);
+  const albumId = album.folderId || album.id;
+  const albumTitle = album.folderName || album.title;
+  const folderMedia = media.filter((m) => m.albumId === albumId || m.folderId === albumId || m.albumId === album.id);
 
   return (
     <div className="folder-detail-page">
@@ -43,7 +45,7 @@ export default function FolderDetailPage({ album, media, onBack, onOpenMedia }) 
             opacity: scrollProgress > 0.05 ? Math.max(0.2, 1 - scrollProgress * 0.6) : 1
           }}
         >
-          <h1 className="folder-detail-title">{album.title}</h1>
+          <h1 className="folder-detail-title">{albumTitle}</h1>
           {album.description && (
             <p className="folder-detail-desc">{album.description}</p>
           )}

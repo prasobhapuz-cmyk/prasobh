@@ -321,29 +321,35 @@ export default function StudioModal({
 
     setIsSubmitting(true);
     setUploadProgressText('Creating folder in Cloud Database...');
-    const slug = newAlbumTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'folder';
-    const albumId = `folder-${slug}-${Date.now()}`;
+    const folderName = newAlbumTitle.trim();
+    const slug = folderName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'folder';
+    const folderId = `folder-${slug}-${Date.now()}`;
 
     const newAlbum = {
-      id: albumId,
-      title: newAlbumTitle.trim(),
+      id: folderId,
+      folderId: folderId,
+      title: folderName,
+      folderName: folderName,
+      userId: 'user_prasobh_appus07',
+      createdAt: new Date().toISOString(),
       location: newAlbumLocation.trim() || 'Expedition',
       description: newAlbumDesc.trim() || '',
-      coverImage: newAlbumCover.trim() || 'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?q=80&w=1200&auto=format&fit=crop'
+      coverImage: newAlbumCover.trim() || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200&auto=format&fit=crop'
     };
 
     try {
-      await saveAlbum(newAlbum);
+      const created = await saveAlbum(newAlbum);
       await onDataChanged();
       setIsSubmitting(false);
       setUploadProgressText('');
 
-      setSelectedAlbumId(albumId);
+      const activeId = created?.id || created?.folderId || folderId;
+      setSelectedAlbumId(activeId);
       setNewAlbumTitle('');
       setNewAlbumLocation('');
       setNewAlbumCover('');
       setNewAlbumDesc('');
-      showToast(`Created folder "${newAlbum.title}" in Cloud Database!`);
+      showToast(`Created folder "${folderName}" in Cloud Database!`);
 
       try {
         confetti({ particleCount: 40, spread: 55 });
@@ -571,11 +577,15 @@ export default function StudioModal({
                         className="form-select"
                         id="select-batch-folder"
                       >
-                        {albums.map((alb) => (
-                          <option key={alb.id} value={alb.id}>
-                            {alb.title} ({alb.location})
-                          </option>
-                        ))}
+                        {albums.map((alb) => {
+                          const albId = alb.folderId || alb.id;
+                          const albTitle = alb.folderName || alb.title;
+                          return (
+                            <option key={albId} value={albId}>
+                              {albTitle} ({alb.location})
+                            </option>
+                          );
+                        })}
                       </select>
                     </div>
 
@@ -824,12 +834,14 @@ export default function StudioModal({
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
                     {albums.map((alb) => {
-                      const count = media.filter((m) => m.albumId === alb.id).length;
-                      const isEditingThisCover = editingAlbumId === alb.id;
+                      const albId = alb.folderId || alb.id;
+                      const albTitle = alb.folderName || alb.title;
+                      const count = media.filter((m) => m.albumId === albId || m.folderId === albId || m.albumId === alb.id).length;
+                      const isEditingThisCover = editingAlbumId === albId;
 
                       return (
                         <div
-                          key={alb.id}
+                          key={albId}
                           style={{
                             padding: '1rem',
                             background: '#000',
@@ -841,12 +853,12 @@ export default function StudioModal({
                             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                               <img
                                 src={alb.coverImage}
-                                alt={alb.title}
+                                alt={albTitle}
                                 style={{ width: '52px', height: '52px', borderRadius: '4px', objectFit: 'cover' }}
                               />
                               <div>
                                 <div style={{ fontWeight: 700, color: 'var(--text-pure)', fontSize: '0.95rem' }}>
-                                  {alb.title}
+                                  {albTitle}
                                 </div>
                                 <div style={{ fontSize: '0.75rem', color: 'var(--accent-gold)' }}>
                                   {alb.location} • {count} {count === 1 ? 'item' : 'items'}
@@ -857,7 +869,7 @@ export default function StudioModal({
                             <div style={{ display: 'flex', gap: '0.5rem' }}>
                               <button
                                 onClick={() => {
-                                  setEditingAlbumId(isEditingThisCover ? null : alb.id);
+                                  setEditingAlbumId(isEditingThisCover ? null : albId);
                                   setEditCoverUrl(alb.coverImage);
                                 }}
                                 style={{
@@ -1042,7 +1054,7 @@ export default function StudioModal({
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
                       {media.map((item) => {
                         const isEditingThis = editingMediaId === item.id;
-                        const currentAlbum = albums.find((a) => a.id === item.albumId);
+                        const currentAlbum = albums.find((a) => a.id === item.albumId || a.folderId === item.albumId || a.id === item.folderId || a.folderId === item.folderId);
 
                         return (
                           <div
@@ -1083,7 +1095,7 @@ export default function StudioModal({
                                     {item.title}
                                   </div>
                                   <div style={{ fontSize: '0.725rem', color: 'var(--accent-gold)' }}>
-                                    {currentAlbum?.title || 'Album'} {item.caption ? `• "${item.caption}"` : '• (No caption assigned yet)'}
+                                    {(currentAlbum?.folderName || currentAlbum?.title) || 'Album'} {item.caption ? `• "${item.caption}"` : '• (No caption assigned yet)'}
                                   </div>
                                 </div>
                               </div>
@@ -1156,11 +1168,15 @@ export default function StudioModal({
                                       onChange={(e) => setEditMediaAlbumId(e.target.value)}
                                       className="form-select"
                                     >
-                                      {albums.map((alb) => (
-                                        <option key={alb.id} value={alb.id}>
-                                          {alb.title}
-                                        </option>
-                                      ))}
+                                      {albums.map((alb) => {
+                                        const albId = alb.folderId || alb.id;
+                                        const albTitle = alb.folderName || alb.title;
+                                        return (
+                                          <option key={albId} value={albId}>
+                                            {albTitle}
+                                          </option>
+                                        );
+                                      })}
                                     </select>
                                   </div>
 
