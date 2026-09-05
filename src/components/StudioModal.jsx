@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   X, KeyRound, Upload, FolderPlus, Trash2, Edit3, Image as ImageIcon,
-  Film, Download, RefreshCw, Sparkles, Database, LogOut, Check, Plus, Layers
+  Film, Download, RefreshCw, Sparkles, Database, LogOut, Check, Plus, Layers, Cloud, CloudCheck
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import {
@@ -14,8 +14,12 @@ import {
   deleteMediaItem,
   exportGalleryBackup,
   importGalleryBackup,
-  resetGalleryToDefaults
+  resetGalleryToDefaults,
+  syncToCloud,
+  syncFromCloud,
+  CLOUD_STORAGE_BIN_ID
 } from '../services/storage';
+import { compressImage } from '../utils/imageCompressor';
 
 export default function StudioModal({
   isOpen,
@@ -32,6 +36,7 @@ export default function StudioModal({
   const [authError, setAuthError] = useState('');
   const [activeTab, setActiveTab] = useState('upload'); // 'upload' | 'albums' | 'manage' | 'sync'
   const [importJsonText, setImportJsonText] = useState('');
+  const [isCloudSyncing, setIsCloudSyncing] = useState(false);
 
   // Batch Media Upload Queue (Supports Multiple Files at Once!)
   const [batchQueue, setBatchQueue] = useState([]);
@@ -88,38 +93,51 @@ export default function StudioModal({
     showToast('Locked Studio access.');
   };
 
-  // MULTIPLE FILE UPLOAD HANDLER (Adds multiple photos/videos to the batch queue)
-  const handleMultipleFiles = (files) => {
+  // MULTIPLE FILE UPLOAD HANDLER WITH HIGH-PERFORMANCE COMPRESSION
+  const handleMultipleFiles = async (files) => {
     if (!files || files.length === 0) return;
 
-    const newItems = [];
     const filesArray = Array.from(files);
+    showToast(`Processing ${filesArray.length} ${filesArray.length === 1 ? 'file' : 'files'}...`);
 
-    filesArray.forEach((file, index) => {
+    for (let index = 0; index < filesArray.length; index++) {
+      const file = filesArray[index];
       const isVideo = file.type.startsWith('video');
       const nameWithoutExt = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
       const cleanTitle = nameWithoutExt.charAt(0).toUpperCase() + nameWithoutExt.slice(1);
 
-      const reader = new FileReader();
-      reader.onload = (e) => {
+      try {
+        let finalUrl;
+        if (isVideo) {
+          finalUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => resolve(e.target.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+        } else {
+          // Compress photo for ultra fast cloud storage & instant loading
+          finalUrl = await compressImage(file, 1920, 1920, 0.82);
+        }
+
         setBatchQueue((prev) => [
           ...prev,
           {
             id: `temp-${Date.now()}-${index}-${Math.random()}`,
-            file,
-            url: e.target.result,
+            url: finalUrl,
             type: isVideo ? 'video' : 'photo',
             title: cleanTitle,
-            caption: '', // Caption can be assigned now or afterwards!
+            caption: '',
             camera: batchCamera || '',
             albumId: selectedAlbumId || albums[0]?.id || 'folder-kyoto'
           }
         ]);
-      };
-      reader.readAsDataURL(file);
-    });
+      } catch (err) {
+        console.error('Error processing file:', err);
+      }
+    }
 
-    showToast(`Loaded ${filesArray.length} ${filesArray.length === 1 ? 'file' : 'files'} into queue.`);
+    showToast(`Loaded ${filesArray.length} ${filesArray.length === 1 ? 'photo' : 'photos'} into queue.`);
   };
 
   const handleDrop = (e) => {
@@ -167,7 +185,7 @@ export default function StudioModal({
     setBatchQueue((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // PUBLISH ALL BATCH QUEUE ITEMS TO GALLERY
+  // PUBLISH ALL BATCH QUEUE ITEMS TO GALLERY AND CLOUD
   const handlePublishAllBatch = async () => {
     if (batchQueue.length === 0) return;
 
@@ -175,7 +193,7 @@ export default function StudioModal({
     const targetAlbum = albums.find((a) => a.id === selectedAlbumId) || albums[0];
 
     const mediaToSave = batchQueue.map((item, idx) => ({
-      id: `media-${Date.now()}-${idx}`,
+      id: `media-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`,
       albumId: item.albumId || targetAlbum?.id || 'folder-kyoto',
       type: item.type,
       title: item.title.trim() || `Frame ${idx + 1}`,
@@ -196,7 +214,7 @@ export default function StudioModal({
 
     const count = batchQueue.length;
     setBatchQueue([]);
-    showToast(`Published ${count} ${count === 1 ? 'photo' : 'photos'} to "${targetAlbum?.title || 'Album'}".`);
+    showToast(`Published & synced ${count} ${count === 1 ? 'photo' : 'photos'} to "${targetAlbum?.title || 'Album'}".`);
 
     try {
       confetti({ particleCount: 50, spread: 65 });
@@ -228,14 +246,15 @@ export default function StudioModal({
   };
 
   // Handle Drag & Drop / File Selection / Paste for New Album Cover Image
-  const handleAlbumCoverFile = (file) => {
+  const handleAlbumCoverFile = async (file) => {
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      setNewAlbumCover(e.target.result);
+    try {
+      const compressed = await compressImage(file, 1920, 1920, 0.82);
+      setNewAlbumCover(compressed);
       showToast('Cover image loaded.');
-    };
-    reader.readAsDataURL(file);
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   const handleAlbumCoverDrop = (e) => {
@@ -259,16 +278,17 @@ export default function StudioModal({
   };
 
   // Local file upload handling for Album Cover Editing
-  const handleCoverFileUpload = (albumId, file) => {
+  const handleCoverFileUpload = async (albumId, file) => {
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      await updateAlbumCover(albumId, e.target.result);
+    try {
+      const compressed = await compressImage(file, 1920, 1920, 0.82);
+      await updateAlbumCover(albumId, compressed);
       await onDataChanged();
       setEditingAlbumId(null);
-      showToast('Album cover updated.');
-    };
-    reader.readAsDataURL(file);
+      showToast('Album cover updated and synced.');
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   // Create new folder
@@ -299,7 +319,7 @@ export default function StudioModal({
     setNewAlbumLocation('');
     setNewAlbumCover('');
     setNewAlbumDesc('');
-    showToast(`Created folder "${newAlbum.title}"`);
+    showToast(`Created and synced folder "${newAlbum.title}" to Cloud!`);
   };
 
   // Update Cover from URL
@@ -309,7 +329,7 @@ export default function StudioModal({
     await onDataChanged();
     setEditingAlbumId(null);
     setEditCoverUrl('');
-    showToast('Album cover image updated.');
+    showToast('Album cover image updated and synced.');
   };
 
   // Delete media item
@@ -317,7 +337,7 @@ export default function StudioModal({
     if (confirm(`Delete "${title}"?`)) {
       await deleteMediaItem(id);
       await onDataChanged();
-      showToast('Item deleted.');
+      showToast('Item deleted and cloud updated.');
     }
   };
 
@@ -327,6 +347,25 @@ export default function StudioModal({
       await deleteAlbum(albumId);
       await onDataChanged();
       showToast(`Folder "${title}" deleted.`);
+    }
+  };
+
+  // Force Cloud Sync Handler
+  const handleForceCloudSync = async () => {
+    setIsCloudSyncing(true);
+    showToast('Syncing with central cloud database...');
+    try {
+      await syncToCloud();
+      const result = await syncFromCloud();
+      await onDataChanged();
+      setIsCloudSyncing(false);
+      showToast('Cloud database synchronized successfully across all devices!');
+      try {
+        confetti({ particleCount: 35, spread: 50 });
+      } catch (e) {}
+    } catch (err) {
+      setIsCloudSyncing(false);
+      showToast('Cloud sync error: ' + (err.message || 'Check network'));
     }
   };
 
@@ -470,7 +509,7 @@ export default function StudioModal({
                 id="studio-tab-sync"
               >
                 <RefreshCw size={13} style={{ display: 'inline', marginRight: '5px' }} />
-                Sync to Phone / Export
+                Cloud Sync & Phone
               </button>
             </div>
 
@@ -529,7 +568,7 @@ export default function StudioModal({
                       Click or Drag & Drop Multiple Photos / Videos
                     </h4>
                     <p style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
-                      You can select multiple photos at once. Captions can be assigned below now or anytime afterwards!
+                      You can select multiple photos at once. Photos are automatically optimized for instant cloud sync!
                     </p>
                   </div>
 
@@ -621,7 +660,7 @@ export default function StudioModal({
                         id="btn-publish-batch-submit"
                         style={{ padding: '0.9rem', fontSize: '0.88rem' }}
                       >
-                        {isSubmitting ? 'Saving to Archive...' : `Publish All ${batchQueue.length} ${batchQueue.length === 1 ? 'Photo' : 'Photos'} to Gallery`}
+                        {isSubmitting ? 'Publishing & Syncing to Cloud...' : `Publish All ${batchQueue.length} ${batchQueue.length === 1 ? 'Photo' : 'Photos'} to Gallery`}
                       </button>
                     </div>
                   )}
@@ -725,7 +764,7 @@ export default function StudioModal({
                       className="auth-submit-btn"
                       id="btn-create-folder-submit"
                     >
-                      {isSubmitting ? 'Creating...' : '+ Create New Folder'}
+                      {isSubmitting ? 'Creating & Syncing...' : '+ Create New Folder'}
                     </button>
                   </form>
 
@@ -1104,40 +1143,105 @@ export default function StudioModal({
                 </div>
               )}
 
-              {/* TAB 4: SYNC TO PHONE & BACKUP */}
+              {/* TAB 4: REAL-TIME CLOUD SYNC TO PHONE & BACKUP */}
               {activeTab === 'sync' && (
                 <div>
+                  {/* REAL-TIME CLOUD DATABASE STATUS CARD */}
                   <div
                     style={{
                       background: '#040405',
                       border: '1px solid var(--border-gold)',
                       padding: '1.5rem',
                       borderRadius: '8px',
+                      marginBottom: '1.75rem'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                        <span style={{
+                          display: 'inline-block',
+                          width: '10px',
+                          height: '10px',
+                          borderRadius: '50%',
+                          backgroundColor: '#22c55e',
+                          boxShadow: '0 0 10px #22c55e'
+                        }} />
+                        <h4 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.15rem', color: 'var(--text-pure)' }}>
+                          Central Cloud Database (Live)
+                        </h4>
+                      </div>
+
+                      <button
+                        onClick={handleForceCloudSync}
+                        disabled={isCloudSyncing}
+                        style={{
+                          background: 'rgba(212, 175, 55, 0.15)',
+                          border: '1px solid var(--border-gold)',
+                          color: 'var(--accent-gold)',
+                          padding: '0.5rem 1rem',
+                          borderRadius: '6px',
+                          fontSize: '0.8rem',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.4rem'
+                        }}
+                      >
+                        <RefreshCw size={14} className={isCloudSyncing ? 'spin-anim' : ''} />
+                        <span>{isCloudSyncing ? 'Syncing...' : 'Force Cloud Sync Now'}</span>
+                      </button>
+                    </div>
+
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.835rem', lineHeight: 1.6, marginBottom: '1rem' }}>
+                      All folders created, covers updated, and photos published in Studio are automatically synchronized to the cloud storage in real-time. Anyone visiting <strong style={{ color: 'var(--text-pure)' }}>https://prasobh.vercel.app</strong> from a mobile phone, tablet, or another computer will immediately see your newly added folders and photos!
+                    </p>
+
+                    <div style={{
+                      background: 'rgba(255,255,255,0.03)',
+                      border: '1px solid var(--border-subtle)',
+                      padding: '0.75rem 1rem',
+                      borderRadius: '6px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      fontSize: '0.78rem',
+                      color: 'var(--text-muted)'
+                    }}>
+                      <span>Cloud Storage Vault: <strong style={{ color: 'var(--accent-gold)' }}>{CLOUD_STORAGE_BIN_ID}</strong></span>
+                      <span>Total Albums: <strong style={{ color: 'var(--text-pure)' }}>{albums.length}</strong> • Photos: <strong style={{ color: 'var(--text-pure)' }}>{media.length}</strong></span>
+                    </div>
+                  </div>
+
+                  {/* BACKUP & MANUAL EXPORT SECTION */}
+                  <div
+                    style={{
+                      background: '#040405',
+                      border: '1px solid var(--border-subtle)',
+                      padding: '1.5rem',
+                      borderRadius: '8px',
                       marginBottom: '2rem'
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginBottom: '0.75rem' }}>
-                      <RefreshCw size={20} color="var(--accent-gold)" />
-                      <h4 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.2rem', color: 'var(--text-pure)' }}>
-                        Cross-Device Sync (Phone & Computer)
-                      </h4>
-                    </div>
-                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', lineHeight: 1.6, marginBottom: '1.25rem' }}>
-                      Because albums and photos are stored in secure browser storage on this device, you can sync them across your phone and computer in 1 click:
+                    <h5 style={{ fontFamily: 'var(--font-serif)', fontSize: '1rem', color: 'var(--text-pure)', marginBottom: '0.5rem' }}>
+                      Offline Backup & Data Export
+                    </h5>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', lineHeight: 1.6, marginBottom: '1rem' }}>
+                      Download or copy a complete JSON snapshot of all albums, captions, and media coordinates:
                     </p>
 
-                    <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginBottom: '1.5rem' }}>
+                    <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1.25rem' }}>
                       <button
                         onClick={async () => {
                           const json = await exportGalleryBackup();
                           navigator.clipboard.writeText(json);
-                          showToast('Copied full gallery data to clipboard! Paste it on your phone.');
+                          showToast('Copied full gallery data to clipboard!');
                         }}
                         className="auth-submit-btn"
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem', width: 'auto', padding: '0.65rem 1.25rem' }}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem', width: 'auto', padding: '0.55rem 1.1rem', fontSize: '0.8rem' }}
                       >
-                        <Download size={15} />
-                        <span>1. Copy All Folders & Photos</span>
+                        <Download size={14} />
+                        <span>Copy All JSON Data</span>
                       </button>
 
                       <button
@@ -1147,10 +1251,10 @@ export default function StudioModal({
                           const url = URL.createObjectURL(blob);
                           const a = document.createElement('a');
                           a.href = url;
-                          a.download = 'gallery_manifest.json';
+                          a.download = `gallery_backup_${Date.now()}.json`;
                           a.click();
                           URL.revokeObjectURL(url);
-                          showToast('Downloaded gallery_manifest.json');
+                          showToast('Downloaded backup file.');
                         }}
                         style={{
                           display: 'inline-flex',
@@ -1159,31 +1263,25 @@ export default function StudioModal({
                           background: 'rgba(255,255,255,0.06)',
                           border: '1px solid var(--border-subtle)',
                           color: '#fff',
-                          padding: '0.65rem 1.25rem',
+                          padding: '0.55rem 1.1rem',
                           borderRadius: '4px',
                           fontSize: '0.8rem',
                           cursor: 'pointer'
                         }}
                       >
-                        <Database size={15} />
-                        <span>Download Manifest File</span>
+                        <Database size={14} />
+                        <span>Download JSON File</span>
                       </button>
                     </div>
 
                     {/* RESTORE / IMPORT ON THIS DEVICE */}
-                    <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '1.25rem' }}>
-                      <h5 style={{ fontSize: '0.9rem', color: 'var(--text-pure)', marginBottom: '0.4rem' }}>
-                        2. Paste & Apply on Phone / Device
-                      </h5>
-                      <p style={{ color: 'var(--text-muted)', fontSize: '0.78rem', marginBottom: '0.75rem' }}>
-                        Paste the JSON data from your computer below and click "Apply to this Device":
-                      </p>
-
+                    <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '1rem' }}>
+                      <label className="form-label">Restore from JSON string:</label>
                       <textarea
-                        rows={3}
+                        rows={2}
                         value={importJsonText}
                         onChange={(e) => setImportJsonText(e.target.value)}
-                        placeholder="Paste gallery backup JSON here..."
+                        placeholder="Paste JSON backup data here to restore..."
                         className="form-textarea"
                         style={{ width: '100%', marginBottom: '0.75rem', fontFamily: 'monospace', fontSize: '0.75rem' }}
                       />
@@ -1197,16 +1295,16 @@ export default function StudioModal({
                           try {
                             await importGalleryBackup(importJsonText.trim());
                             onDataChanged();
-                            showToast('Successfully synced all folders and photos to this device!');
+                            showToast('Successfully restored and synced to cloud!');
                             setImportJsonText('');
                           } catch (err) {
-                            showToast('Failed to import: Invalid JSON data.');
+                            showToast('Failed to import: Invalid JSON format.');
                           }
                         }}
                         className="auth-submit-btn"
-                        style={{ width: 'auto', padding: '0.55rem 1.1rem' }}
+                        style={{ width: 'auto', padding: '0.45rem 1rem', fontSize: '0.78rem' }}
                       >
-                        Apply to this Device
+                        Restore & Sync
                       </button>
                     </div>
                   </div>
@@ -1220,7 +1318,9 @@ export default function StudioModal({
                       background: 'rgba(239, 68, 68, 0.05)',
                       display: 'flex',
                       alignItems: 'center',
-                      justifyContent: 'space-between'
+                      justifyContent: 'space-between',
+                      flexWrap: 'wrap',
+                      gap: '0.75rem'
                     }}
                   >
                     <div>

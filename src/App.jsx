@@ -8,7 +8,14 @@ import AboutContactSection from './components/AboutContactSection';
 import FolderDetailPage from './components/FolderDetailPage';
 import LightboxModal from './components/LightboxModal';
 import StudioModal from './components/StudioModal';
-import { initializeStorage, getAlbums, getAllMedia, DEFAULT_ALBUMS } from './services/storage';
+import {
+  initializeStorage,
+  getAlbums,
+  getAllMedia,
+  syncFromCloud,
+  onCloudSyncUpdated,
+  DEFAULT_ALBUMS
+} from './services/storage';
 
 export default function App() {
   const [albums, setAlbums] = useState(DEFAULT_ALBUMS);
@@ -46,7 +53,7 @@ export default function App() {
     };
   }, [activeFolder]);
 
-  // Load initial data from local DB and sync from global manifest in background
+  // Load initial data from local DB and sync with Cloud Storage in background
   const loadData = async () => {
     try {
       await initializeStorage();
@@ -60,29 +67,13 @@ export default function App() {
         setMedia(localMedia);
       }
 
-      // Background manifest sync so visitors on ANY mobile/desktop device see all published albums
-      try {
-        const res = await fetch(`/gallery_manifest.json?t=${Date.now()}`, { cache: 'no-cache' });
-        if (res.ok) {
-          const manifest = await res.json();
-          if (manifest && manifest.albums && Array.isArray(manifest.albums) && manifest.albums.length > 0) {
-            const mergedAlbumsMap = new Map();
-            localAlbums.forEach((a) => mergedAlbumsMap.set(a.id, a));
-            manifest.albums.forEach((a) => mergedAlbumsMap.set(a.id, a));
-            const mergedAlbums = Array.from(mergedAlbumsMap.values());
-            
-            setAlbums(mergedAlbums);
-
-            if (manifest.media && Array.isArray(manifest.media)) {
-              const mergedMediaMap = new Map();
-              localMedia.forEach((m) => mergedMediaMap.set(m.id, m));
-              manifest.media.forEach((m) => mergedMediaMap.set(m.id, m));
-              setMedia(Array.from(mergedMediaMap.values()));
-            }
-          }
+      // Sync latest data from central cloud database so any new folders/images appear instantly on all devices
+      const cloudData = await syncFromCloud();
+      if (cloudData && cloudData.albums && cloudData.albums.length > 0) {
+        setAlbums(cloudData.albums);
+        if (cloudData.media) {
+          setMedia(cloudData.media);
         }
-      } catch (manifestErr) {
-        // Offline or manifest skipped, keep local data
       }
     } catch (err) {
       console.error('Failed to load gallery data:', err);
@@ -91,7 +82,52 @@ export default function App() {
 
   useEffect(() => {
     loadData();
+
+    // Subscribe to cloud sync updates
+    const unsubscribe = onCloudSyncUpdated((cloudData) => {
+      if (cloudData && cloudData.albums) {
+        setAlbums(cloudData.albums);
+        setMedia(cloudData.media || []);
+      }
+    });
+
+    // Automatically check cloud sync when user refocuses the tab / opens phone screen
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        syncFromCloud().then((cloudData) => {
+          if (cloudData && cloudData.albums) {
+            setAlbums(cloudData.albums);
+            setMedia(cloudData.media || []);
+          }
+        }).catch(() => {});
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleVisibilityChange);
+
+    // Periodic light background sync every 25 seconds
+    const intervalId = setInterval(() => {
+      syncFromCloud().catch(() => {});
+    }, 25000);
+
+    return () => {
+      unsubscribe();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleVisibilityChange);
+      clearInterval(intervalId);
+    };
   }, []);
+
+  // Update activeFolder reference if albums change while inside a folder
+  useEffect(() => {
+    if (activeFolder) {
+      const updated = albums.find((a) => a.id === activeFolder.id);
+      if (updated) {
+        setActiveFolder(updated);
+      }
+    }
+  }, [albums]);
 
   // Toast Helper
   const showToast = (message) => {

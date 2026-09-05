@@ -1,9 +1,14 @@
-// IndexedDB Storage Service for Prasobh's Gallery
+// Hybrid IndexedDB + Cloud Storage Service for Prasobh's Gallery
+// Enables instant 0ms local rendering with automatic real-time cloud synchronization across devices
 
 const DB_NAME = 'GeometryOfSilenceDB';
 const DB_VERSION = 2;
 const ALBUMS_STORE = 'albums';
 const MEDIA_STORE = 'media';
+
+// Production Cloud Bin ID on ExtendsClass
+export const CLOUD_STORAGE_BIN_ID = 'bdbddaa';
+export const CLOUD_STORAGE_URL = `https://extendsclass.com/api/json-storage/bin/${CLOUD_STORAGE_BIN_ID}`;
 
 // Default starter place folders
 export const DEFAULT_ALBUMS = [
@@ -32,6 +37,24 @@ export const DEFAULT_ALBUMS = [
 
 export const DEFAULT_MEDIA = [];
 
+// Track sync listeners for instant UI updates
+const syncListeners = new Set();
+
+export function onCloudSyncUpdated(callback) {
+  syncListeners.add(callback);
+  return () => syncListeners.delete(callback);
+}
+
+function notifySyncListeners(data) {
+  syncListeners.forEach((cb) => {
+    try {
+      cb(data);
+    } catch (e) {
+      console.error('Sync listener error:', e);
+    }
+  });
+}
+
 function openDB() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -57,10 +80,88 @@ function openDB() {
   });
 }
 
+// Push local data to the central cloud storage bin
+export async function syncToCloud() {
+  try {
+    const albums = await getLocalAlbums();
+    const media = await getLocalMedia();
+    const payload = {
+      albums,
+      media,
+      updatedAt: new Date().toISOString()
+    };
+
+    const res = await fetch(CLOUD_STORAGE_URL, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (res.ok) {
+      localStorage.setItem('prasobh_last_cloud_sync', new Date().toISOString());
+      return { success: true, timestamp: new Date().toISOString() };
+    } else {
+      console.warn('Cloud sync response error:', res.status);
+      return { success: false, status: res.status };
+    }
+  } catch (err) {
+    console.warn('Cloud sync push failed (network offline):', err);
+    return { success: false, error: err.message };
+  }
+}
+
+// Fetch the latest central cloud data and update local cache
+export async function syncFromCloud() {
+  try {
+    const res = await fetch(CLOUD_STORAGE_URL + '?t=' + Date.now(), {
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-store'
+    });
+
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    if (data && Array.isArray(data.albums) && data.albums.length > 0) {
+      // Overwrite/update local IndexedDB with latest cloud data
+      const db = await openDB();
+      await new Promise((resolve) => {
+        const tx = db.transaction([ALBUMS_STORE, MEDIA_STORE], 'readwrite');
+        const albumStore = tx.objectStore(ALBUMS_STORE);
+        const mediaStore = tx.objectStore(MEDIA_STORE);
+
+        albumStore.clear();
+        mediaStore.clear();
+
+        for (const album of data.albums) {
+          albumStore.put(album);
+        }
+
+        if (Array.isArray(data.media)) {
+          for (const item of data.media) {
+            mediaStore.put(item);
+          }
+        }
+
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      });
+
+      localStorage.setItem('prasobh_last_cloud_sync', new Date().toISOString());
+      notifySyncListeners({ albums: data.albums, media: data.media || [] });
+      return { albums: data.albums, media: data.media || [] };
+    }
+  } catch (err) {
+    console.warn('Cloud pull error (using local cache):', err);
+  }
+  return null;
+}
+
 export async function initializeStorage() {
   try {
     const db = await openDB();
-    return new Promise((resolve) => {
+    await new Promise((resolve) => {
       const tx = db.transaction([ALBUMS_STORE, MEDIA_STORE], 'readwrite');
       const albumStore = tx.objectStore(ALBUMS_STORE);
 
@@ -76,13 +177,17 @@ export async function initializeStorage() {
       tx.oncomplete = () => resolve(true);
       tx.onerror = () => resolve(false);
     });
+
+    // In background, sync from cloud
+    syncFromCloud().catch(() => {});
+    return true;
   } catch (err) {
     console.error('IndexedDB initialize error:', err);
     return false;
   }
 }
 
-export async function getAlbums() {
+async function getLocalAlbums() {
   try {
     const db = await openDB();
     return new Promise((resolve) => {
@@ -104,20 +209,28 @@ export async function getAlbums() {
   }
 }
 
+export async function getAlbums() {
+  return getLocalAlbums();
+}
+
 export async function saveAlbum(album) {
   const db = await openDB();
-  return new Promise((resolve, reject) => {
+  await new Promise((resolve, reject) => {
     const tx = db.transaction(ALBUMS_STORE, 'readwrite');
     const store = tx.objectStore(ALBUMS_STORE);
     const req = store.put(album);
     req.onsuccess = () => resolve(album);
     req.onerror = () => reject(req.error);
   });
+
+  // Automatically sync to cloud
+  syncToCloud().catch(console.error);
+  return album;
 }
 
 export async function updateAlbumCover(albumId, newCoverUrl) {
   const db = await openDB();
-  return new Promise((resolve, reject) => {
+  await new Promise((resolve, reject) => {
     const tx = db.transaction(ALBUMS_STORE, 'readwrite');
     const store = tx.objectStore(ALBUMS_STORE);
     const getReq = store.get(albumId);
@@ -131,11 +244,15 @@ export async function updateAlbumCover(albumId, newCoverUrl) {
     tx.oncomplete = () => resolve(true);
     tx.onerror = () => reject(tx.error);
   });
+
+  // Automatically sync to cloud
+  syncToCloud().catch(console.error);
+  return true;
 }
 
 export async function deleteAlbum(albumId) {
   const db = await openDB();
-  return new Promise((resolve, reject) => {
+  await new Promise((resolve, reject) => {
     const tx = db.transaction([ALBUMS_STORE, MEDIA_STORE], 'readwrite');
     const albumStore = tx.objectStore(ALBUMS_STORE);
     const mediaStore = tx.objectStore(MEDIA_STORE);
@@ -155,9 +272,13 @@ export async function deleteAlbum(albumId) {
     tx.oncomplete = () => resolve(true);
     tx.onerror = () => reject(tx.error);
   });
+
+  // Automatically sync to cloud
+  syncToCloud().catch(console.error);
+  return true;
 }
 
-export async function getAllMedia() {
+async function getLocalMedia() {
   try {
     const db = await openDB();
     return new Promise((resolve) => {
@@ -172,21 +293,29 @@ export async function getAllMedia() {
   }
 }
 
+export async function getAllMedia() {
+  return getLocalMedia();
+}
+
 export async function saveMediaItem(mediaItem) {
   const db = await openDB();
-  return new Promise((resolve, reject) => {
+  await new Promise((resolve, reject) => {
     const tx = db.transaction(MEDIA_STORE, 'readwrite');
     const store = tx.objectStore(MEDIA_STORE);
     const req = store.put(mediaItem);
     req.onsuccess = () => resolve(mediaItem);
     req.onerror = () => reject(req.error);
   });
+
+  // Automatically sync to cloud
+  syncToCloud().catch(console.error);
+  return mediaItem;
 }
 
 // Batch save multiple media items at once
 export async function saveMultipleMediaItems(itemsList) {
   const db = await openDB();
-  return new Promise((resolve, reject) => {
+  await new Promise((resolve, reject) => {
     const tx = db.transaction(MEDIA_STORE, 'readwrite');
     const store = tx.objectStore(MEDIA_STORE);
     itemsList.forEach((item) => {
@@ -195,12 +324,16 @@ export async function saveMultipleMediaItems(itemsList) {
     tx.oncomplete = () => resolve(true);
     tx.onerror = () => reject(tx.error);
   });
+
+  // Automatically sync to cloud
+  syncToCloud().catch(console.error);
+  return true;
 }
 
 // Update caption, title, or metadata for an existing media item
 export async function updateMediaItem(mediaId, updates) {
   const db = await openDB();
-  return new Promise((resolve, reject) => {
+  await new Promise((resolve, reject) => {
     const tx = db.transaction(MEDIA_STORE, 'readwrite');
     const store = tx.objectStore(MEDIA_STORE);
     const getReq = store.get(mediaId);
@@ -221,23 +354,31 @@ export async function updateMediaItem(mediaId, updates) {
     tx.oncomplete = () => resolve(true);
     tx.onerror = () => reject(tx.error);
   });
+
+  // Automatically sync to cloud
+  syncToCloud().catch(console.error);
+  return true;
 }
 
 export async function deleteMediaItem(mediaId) {
   const db = await openDB();
-  return new Promise((resolve, reject) => {
+  await new Promise((resolve, reject) => {
     const tx = db.transaction(MEDIA_STORE, 'readwrite');
     const store = tx.objectStore(MEDIA_STORE);
     const req = store.delete(mediaId);
     req.onsuccess = () => resolve(true);
     req.onerror = () => reject(req.error);
   });
+
+  // Automatically sync to cloud
+  syncToCloud().catch(console.error);
+  return true;
 }
 
 // Export gallery backup JSON
 export async function exportGalleryBackup() {
-  const albums = await getAlbums();
-  const media = await getAllMedia();
+  const albums = await getLocalAlbums();
+  const media = await getLocalMedia();
   const backup = {
     author: 'Prasobh',
     exportedAt: new Date().toISOString(),
@@ -272,10 +413,14 @@ export async function importGalleryBackup(jsonString) {
       }
     }
 
-    return new Promise((resolve) => {
+    await new Promise((resolve) => {
       tx.oncomplete = () => resolve(true);
       tx.onerror = () => resolve(false);
     });
+
+    // Automatically sync imported data to cloud
+    await syncToCloud();
+    return true;
   } catch (err) {
     console.error('Import failed:', err);
     throw err;
@@ -284,7 +429,7 @@ export async function importGalleryBackup(jsonString) {
 
 export async function resetGalleryToDefaults() {
   const db = await openDB();
-  return new Promise((resolve, reject) => {
+  await new Promise((resolve, reject) => {
     const tx = db.transaction([ALBUMS_STORE, MEDIA_STORE], 'readwrite');
     const albumStore = tx.objectStore(ALBUMS_STORE);
     const mediaStore = tx.objectStore(MEDIA_STORE);
@@ -299,4 +444,8 @@ export async function resetGalleryToDefaults() {
     tx.oncomplete = () => resolve(true);
     tx.onerror = () => reject(tx.error);
   });
+
+  // Automatically sync reset state to cloud
+  await syncToCloud();
+  return true;
 }
