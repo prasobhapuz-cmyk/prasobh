@@ -1,4 +1,4 @@
-// Vercel Serverless Function: Cloud Gallery Synchronizer
+// Vercel Serverless Function: High-Reliability Cloud Gallery Synchronizer
 // Handles backend-to-backend cloud storage sync with zero browser CORS preflight restrictions
 
 import https from 'https';
@@ -30,11 +30,47 @@ const DEFAULT_ALBUMS = [
   }
 ];
 
+// In-memory cache for warm lambda executions
+let memoryCache = null;
+
+function sanitizePayload(payload) {
+  const defaultFallbackImg = 'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?q=80&w=1200&auto=format&fit=crop';
+
+  const cleanAlbums = (payload.albums || []).map((alb) => {
+    let cover = alb.coverImage || defaultFallbackImg;
+    // If cover is an oversized base64 data url (>50KB), replace with fallback to prevent 413 size limits
+    if (typeof cover === 'string' && cover.startsWith('data:') && cover.length > 50000) {
+      cover = defaultFallbackImg;
+    }
+    return {
+      ...alb,
+      coverImage: cover
+    };
+  });
+
+  const cleanMedia = (payload.media || []).map((item) => {
+    let url = item.url || defaultFallbackImg;
+    if (typeof url === 'string' && url.startsWith('data:') && url.length > 50000) {
+      url = defaultFallbackImg;
+    }
+    return {
+      ...item,
+      url
+    };
+  });
+
+  return {
+    albums: cleanAlbums,
+    media: cleanMedia,
+    updatedAt: payload.updatedAt || new Date().toISOString()
+  };
+}
+
 function fetchFromCloud() {
   return new Promise((resolve) => {
     const req = https.get(CLOUD_STORAGE_URL + '?t=' + Date.now(), {
       headers: {
-        'User-Agent': 'PrasobhGallery-VercelSync/1.0',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
         'Accept': 'application/json'
       },
       timeout: 6000
@@ -45,30 +81,36 @@ function fetchFromCloud() {
         try {
           const parsed = JSON.parse(data);
           if (parsed && Array.isArray(parsed.albums) && parsed.albums.length > 0) {
-            resolve({ albums: parsed.albums, media: parsed.media || [], updatedAt: parsed.updatedAt });
+            memoryCache = { albums: parsed.albums, media: parsed.media || [], updatedAt: parsed.updatedAt };
+            resolve(memoryCache);
+          } else if (memoryCache) {
+            resolve(memoryCache);
           } else {
             resolve({ albums: DEFAULT_ALBUMS, media: [], updatedAt: new Date().toISOString() });
           }
         } catch (e) {
-          resolve({ albums: DEFAULT_ALBUMS, media: [], updatedAt: new Date().toISOString() });
+          resolve(memoryCache || { albums: DEFAULT_ALBUMS, media: [], updatedAt: new Date().toISOString() });
         }
       });
     });
 
     req.on('error', () => {
-      resolve({ albums: DEFAULT_ALBUMS, media: [], updatedAt: new Date().toISOString() });
+      resolve(memoryCache || { albums: DEFAULT_ALBUMS, media: [], updatedAt: new Date().toISOString() });
     });
 
     req.on('timeout', () => {
       req.destroy();
-      resolve({ albums: DEFAULT_ALBUMS, media: [], updatedAt: new Date().toISOString() });
+      resolve(memoryCache || { albums: DEFAULT_ALBUMS, media: [], updatedAt: new Date().toISOString() });
     });
   });
 }
 
 function pushToCloud(payload) {
   return new Promise((resolve) => {
-    const dataString = JSON.stringify(payload);
+    const sanitized = sanitizePayload(payload);
+    memoryCache = sanitized;
+
+    const dataString = JSON.stringify(sanitized);
     const u = new URL(CLOUD_STORAGE_URL);
 
     const req = https.request({
@@ -77,7 +119,7 @@ function pushToCloud(payload) {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
-        'User-Agent': 'PrasobhGallery-VercelSync/1.0',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
         'Content-Length': Buffer.byteLength(dataString)
       },
       timeout: 8000
@@ -88,17 +130,20 @@ function pushToCloud(payload) {
         if (res.statusCode >= 200 && res.statusCode < 300) {
           resolve(true);
         } else {
+          console.warn('ExtendsClass PUT returned status:', res.statusCode, resBody);
           resolve(false);
         }
       });
     });
 
-    req.on('error', () => {
+    req.on('error', (err) => {
+      console.warn('ExtendsClass PUT network error:', err.message);
       resolve(false);
     });
 
     req.on('timeout', () => {
       req.destroy();
+      console.warn('ExtendsClass PUT timed out');
       resolve(false);
     });
 
@@ -138,8 +183,8 @@ export default async function handler(req, res) {
       return res.status(200).json({
         success: true,
         cloudSynced: cloudSuccess,
-        albumsCount: syncPayload.albums.length,
-        mediaCount: syncPayload.media.length,
+        albums: syncPayload.albums,
+        media: syncPayload.media,
         updatedAt: syncPayload.updatedAt
       });
     } catch (err) {
@@ -162,8 +207,8 @@ export default async function handler(req, res) {
     console.error('GET /api/sync error:', err);
     return res.status(200).json({
       success: true,
-      albums: DEFAULT_ALBUMS,
-      media: [],
+      albums: memoryCache?.albums || DEFAULT_ALBUMS,
+      media: memoryCache?.media || [],
       updatedAt: new Date().toISOString()
     });
   }

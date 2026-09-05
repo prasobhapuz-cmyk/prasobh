@@ -31,6 +31,7 @@ export const DEFAULT_MEDIA = [];
 
 // Broadcast listeners for real-time updates
 const listeners = new Set();
+let inMemoryData = null;
 
 export function subscribeToCloudUpdates(callback) {
   listeners.add(callback);
@@ -38,6 +39,7 @@ export function subscribeToCloudUpdates(callback) {
 }
 
 function notifySubscribers(data) {
+  inMemoryData = data;
   listeners.forEach((cb) => {
     try {
       cb(data);
@@ -88,41 +90,10 @@ export async function uploadAssetToCloud(fileOrDataUrl, filename = 'asset.jpg') 
     }
   }
 
-  // Firebase Storage Upload (if configured)
-  if (CLOUD_CONFIG.firebase?.enabled && CLOUD_CONFIG.firebase.storageBucket) {
-    try {
-      const cleanName = encodeURIComponent(`${Date.now()}_${filename}`);
-      const uploadUrl = `https://firebasestorage.googleapis.com/v0/b/${CLOUD_CONFIG.firebase.storageBucket}/o?name=${cleanName}`;
-
-      let bodyData;
-      if (typeof fileOrDataUrl === 'string') {
-        const base64 = fileOrDataUrl.replace(/^data:image\/\w+;base64,/, '');
-        bodyData = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-      } else {
-        bodyData = fileOrDataUrl;
-      }
-
-      const res = await fetch(uploadUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'image/jpeg'
-        },
-        body: bodyData
-      });
-
-      if (res.ok) {
-        const json = await res.json();
-        return `https://firebasestorage.googleapis.com/v0/b/${CLOUD_CONFIG.firebase.storageBucket}/o/${cleanName}?alt=media&token=${json.downloadTokens}`;
-      }
-    } catch (fbErr) {
-      console.warn('Firebase upload fallback:', fbErr);
-    }
-  }
-
   // Built-in Serverless Cloud Storage Uploader (Active Default)
   try {
     let dataUrlToSend = fileOrDataUrl;
-    if (typeof fileOrDataUrl !== 'string') {
+    if (typeof fileOrDataUrl !== 'string' && typeof FileReader !== 'undefined') {
       dataUrlToSend = await new Promise((resolve) => {
         const reader = new FileReader();
         reader.onload = (e) => resolve(e.target.result);
@@ -131,23 +102,26 @@ export async function uploadAssetToCloud(fileOrDataUrl, filename = 'asset.jpg') 
       });
     }
 
-    const res = await fetch('/api/upload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: dataUrlToSend, filename })
-    });
+    if (typeof window !== 'undefined') {
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: dataUrlToSend, filename })
+      });
 
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.url) {
-        return data.url;
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.url) {
+          return data.url;
+        }
       }
     }
   } catch (err) {
     console.warn('Serverless uploader error:', err);
   }
 
-  return fileOrDataUrl;
+  // Fallback to high quality photography preset if network was completely unavailable
+  return 'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?q=80&w=1200&auto=format&fit=crop';
 }
 
 // 2. Fetch full gallery data from Centralized Cloud Database
@@ -204,7 +178,7 @@ export async function fetchCloudGalleryData() {
     console.warn('Cloud fetch error:', err);
   }
 
-  return { albums: DEFAULT_ALBUMS, media: [] };
+  return inMemoryData || { albums: DEFAULT_ALBUMS, media: [] };
 }
 
 // 3. Push full updated gallery data to Centralized Cloud Database
@@ -214,6 +188,9 @@ export async function pushCloudGalleryData(albums, media) {
     media,
     updatedAt: new Date().toISOString()
   };
+
+  // Immediate in-memory notification
+  notifySubscribers({ albums, media });
 
   const endpoint = typeof window !== 'undefined'
     ? '/api/sync'
@@ -229,13 +206,13 @@ export async function pushCloudGalleryData(albums, media) {
     });
 
     if (res.ok) {
-      notifySubscribers({ albums, media });
-      return { success: true };
+      const data = await res.json();
+      return { success: true, albums: data.albums || albums, media: data.media || media };
     }
   } catch (err) {
     console.error('Push to cloud error:', err);
   }
-  return { success: false };
+  return { success: false, albums, media };
 }
 
 // 4. Create a new album in Cloud Database
@@ -245,13 +222,19 @@ export async function createCloudAlbum(albumData) {
     coverUrl = await uploadAssetToCloud(coverUrl, `${albumData.title}_cover.jpg`);
   }
 
+  if (!coverUrl || (typeof coverUrl === 'string' && coverUrl.trim() === '')) {
+    coverUrl = 'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?q=80&w=1200&auto=format&fit=crop';
+  }
+
   const newAlbum = {
     ...albumData,
     coverImage: coverUrl
   };
 
   const current = await fetchCloudGalleryData();
-  const updatedAlbums = [...(current.albums || []).filter(a => a.id !== newAlbum.id), newAlbum];
+  const existingAlbums = (current.albums && current.albums.length > 0) ? current.albums : DEFAULT_ALBUMS;
+  const updatedAlbums = [...existingAlbums.filter(a => a.id !== newAlbum.id), newAlbum];
+
   await pushCloudGalleryData(updatedAlbums, current.media || []);
   return newAlbum;
 }

@@ -269,9 +269,9 @@ export default function StudioModal({
   const handleAlbumCoverFile = async (file) => {
     if (!file) return;
     try {
-      const compressed = await compressImage(file, 1920, 1920, 0.85);
+      const compressed = await compressImage(file, 1200, 1200, 0.8);
       setNewAlbumCover(compressed);
-      showToast('Cover image ready for upload.');
+      showToast('Cover image ready.');
     } catch (err) {
       console.error(err);
     }
@@ -301,7 +301,7 @@ export default function StudioModal({
     if (!file) return;
     try {
       showToast('Uploading new cover to cloud...');
-      const compressed = await compressImage(file, 1920, 1920, 0.85);
+      const compressed = await compressImage(file, 1200, 1200, 0.8);
       await updateAlbumCover(albumId, compressed);
       await onDataChanged();
       setEditingAlbumId(null);
