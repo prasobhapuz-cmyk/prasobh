@@ -1,4 +1,4 @@
-// IndexedDB Storage Service for Prasobh's Gallery
+// IndexedDB Storage Service for Prasobh's Gallery with Cross-Device Sync Support
 
 const DB_NAME = 'GeometryOfSilenceDB';
 const DB_VERSION = 2;
@@ -57,20 +57,59 @@ function openDB() {
   });
 }
 
+// Initialize storage: check IndexedDB and sync with public gallery_manifest.json
 export async function initializeStorage() {
   const db = await openDB();
+  
+  // 1. Check local database
+  const localAlbums = await getAlbums();
+  
+  // 2. Fetch manifest if available
+  let manifest = null;
+  try {
+    const res = await fetch('/gallery_manifest.json', { cache: 'no-cache' });
+    if (res.ok) {
+      manifest = await res.json();
+    }
+  } catch (err) {
+    console.log('Manifest not reachable, using local database.');
+  }
+
   const tx = db.transaction([ALBUMS_STORE, MEDIA_STORE], 'readwrite');
   const albumStore = tx.objectStore(ALBUMS_STORE);
+  const mediaStore = tx.objectStore(MEDIA_STORE);
 
-  const albumCount = await new Promise((res) => {
-    const req = albumStore.count();
-    req.onsuccess = () => res(req.result);
-    req.onerror = () => res(0);
-  });
+  // If local database is empty, seed with manifest or default albums
+  if (localAlbums.length === 0) {
+    const seedAlbums = (manifest && manifest.albums && manifest.albums.length > 0)
+      ? manifest.albums
+      : DEFAULT_ALBUMS;
 
-  if (albumCount === 0) {
-    for (const album of DEFAULT_ALBUMS) {
+    for (const album of seedAlbums) {
       albumStore.put(album);
+    }
+
+    if (manifest && manifest.media && manifest.media.length > 0) {
+      for (const item of manifest.media) {
+        mediaStore.put(item);
+      }
+    }
+  } else if (manifest && manifest.albums) {
+    // Merge any new manifest albums that don't exist locally yet
+    const existingIds = new Set(localAlbums.map((a) => a.id));
+    for (const album of manifest.albums) {
+      if (!existingIds.has(album.id)) {
+        albumStore.put(album);
+      }
+    }
+    if (manifest.media) {
+      const localMedia = await getAllMedia();
+      const existingMediaIds = new Set(localMedia.map((m) => m.id));
+      for (const item of manifest.media) {
+        if (!existingMediaIds.has(item.id)) {
+          mediaStore.put(item);
+        }
+      }
     }
   }
 
@@ -217,6 +256,7 @@ export async function deleteMediaItem(mediaId) {
   });
 }
 
+// Export gallery backup JSON
 export async function exportGalleryBackup() {
   const albums = await getAlbums();
   const media = await getAllMedia();
@@ -227,6 +267,41 @@ export async function exportGalleryBackup() {
     media
   };
   return JSON.stringify(backup, null, 2);
+}
+
+// Import gallery backup JSON
+export async function importGalleryBackup(jsonString) {
+  try {
+    const parsed = typeof jsonString === 'string' ? JSON.parse(jsonString) : jsonString;
+    if (!parsed || (!parsed.albums && !parsed.media)) {
+      throw new Error('Invalid gallery data format');
+    }
+
+    const db = await openDB();
+    const tx = db.transaction([ALBUMS_STORE, MEDIA_STORE], 'readwrite');
+    const albumStore = tx.objectStore(ALBUMS_STORE);
+    const mediaStore = tx.objectStore(MEDIA_STORE);
+
+    if (parsed.albums && Array.isArray(parsed.albums)) {
+      for (const album of parsed.albums) {
+        albumStore.put(album);
+      }
+    }
+
+    if (parsed.media && Array.isArray(parsed.media)) {
+      for (const item of parsed.media) {
+        mediaStore.put(item);
+      }
+    }
+
+    return new Promise((resolve) => {
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+    });
+  } catch (err) {
+    console.error('Import failed:', err);
+    throw err;
+  }
 }
 
 export async function resetGalleryToDefaults() {

@@ -13,6 +13,7 @@ import {
   deleteAlbum,
   deleteMediaItem,
   exportGalleryBackup,
+  importGalleryBackup,
   resetGalleryToDefaults
 } from '../services/storage';
 
@@ -29,7 +30,8 @@ export default function StudioModal({
   });
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
-  const [activeTab, setActiveTab] = useState('upload'); // 'upload' | 'albums' | 'manage'
+  const [activeTab, setActiveTab] = useState('upload'); // 'upload' | 'albums' | 'manage' | 'sync'
+  const [importJsonText, setImportJsonText] = useState('');
 
   // Batch Media Upload Queue (Supports Multiple Files at Once!)
   const [batchQueue, setBatchQueue] = useState([]);
@@ -460,6 +462,15 @@ export default function StudioModal({
               >
                 <Database size={13} style={{ display: 'inline', marginRight: '5px' }} />
                 Library & Edit Captions ({media.length})
+              </button>
+
+              <button
+                className={`studio-tab-btn ${activeTab === 'sync' ? 'active' : ''}`}
+                onClick={() => setActiveTab('sync')}
+                id="studio-tab-sync"
+              >
+                <RefreshCw size={13} style={{ display: 'inline', marginRight: '5px' }} />
+                Sync to Phone / Export
               </button>
             </div>
 
@@ -1090,6 +1101,155 @@ export default function StudioModal({
                       })}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* TAB 4: SYNC TO PHONE & BACKUP */}
+              {activeTab === 'sync' && (
+                <div>
+                  <div
+                    style={{
+                      background: '#040405',
+                      border: '1px solid var(--border-gold)',
+                      padding: '1.5rem',
+                      borderRadius: '8px',
+                      marginBottom: '2rem'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginBottom: '0.75rem' }}>
+                      <RefreshCw size={20} color="var(--accent-gold)" />
+                      <h4 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.2rem', color: 'var(--text-pure)' }}>
+                        Cross-Device Sync (Phone & Computer)
+                      </h4>
+                    </div>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', lineHeight: 1.6, marginBottom: '1.25rem' }}>
+                      Because albums and photos are stored in secure browser storage on this device, you can sync them across your phone and computer in 1 click:
+                    </p>
+
+                    <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginBottom: '1.5rem' }}>
+                      <button
+                        onClick={async () => {
+                          const json = await exportGalleryBackup();
+                          navigator.clipboard.writeText(json);
+                          showToast('Copied full gallery data to clipboard! Paste it on your phone.');
+                        }}
+                        className="auth-submit-btn"
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem', width: 'auto', padding: '0.65rem 1.25rem' }}
+                      >
+                        <Download size={15} />
+                        <span>1. Copy All Folders & Photos</span>
+                      </button>
+
+                      <button
+                        onClick={async () => {
+                          const json = await exportGalleryBackup();
+                          const blob = new Blob([json], { type: 'application/json' });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = 'gallery_manifest.json';
+                          a.click();
+                          URL.revokeObjectURL(url);
+                          showToast('Downloaded gallery_manifest.json');
+                        }}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.45rem',
+                          background: 'rgba(255,255,255,0.06)',
+                          border: '1px solid var(--border-subtle)',
+                          color: '#fff',
+                          padding: '0.65rem 1.25rem',
+                          borderRadius: '4px',
+                          fontSize: '0.8rem',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <Database size={15} />
+                        <span>Download Manifest File</span>
+                      </button>
+                    </div>
+
+                    {/* RESTORE / IMPORT ON THIS DEVICE */}
+                    <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '1.25rem' }}>
+                      <h5 style={{ fontSize: '0.9rem', color: 'var(--text-pure)', marginBottom: '0.4rem' }}>
+                        2. Paste & Apply on Phone / Device
+                      </h5>
+                      <p style={{ color: 'var(--text-muted)', fontSize: '0.78rem', marginBottom: '0.75rem' }}>
+                        Paste the JSON data from your computer below and click "Apply to this Device":
+                      </p>
+
+                      <textarea
+                        rows={3}
+                        value={importJsonText}
+                        onChange={(e) => setImportJsonText(e.target.value)}
+                        placeholder="Paste gallery backup JSON here..."
+                        className="form-textarea"
+                        style={{ width: '100%', marginBottom: '0.75rem', fontFamily: 'monospace', fontSize: '0.75rem' }}
+                      />
+
+                      <button
+                        onClick={async () => {
+                          if (!importJsonText.trim()) {
+                            showToast('Please paste valid JSON data first.');
+                            return;
+                          }
+                          try {
+                            await importGalleryBackup(importJsonText.trim());
+                            onDataChanged();
+                            showToast('Successfully synced all folders and photos to this device!');
+                            setImportJsonText('');
+                          } catch (err) {
+                            showToast('Failed to import: Invalid JSON data.');
+                          }
+                        }}
+                        className="auth-submit-btn"
+                        style={{ width: 'auto', padding: '0.55rem 1.1rem' }}
+                      >
+                        Apply to this Device
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* DANGER ZONE: RESET GALLERY */}
+                  <div
+                    style={{
+                      padding: '1.25rem',
+                      border: '1px solid rgba(239, 68, 68, 0.3)',
+                      borderRadius: '6px',
+                      background: 'rgba(239, 68, 68, 0.05)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between'
+                    }}
+                  >
+                    <div>
+                      <div style={{ color: '#f87171', fontWeight: 600, fontSize: '0.85rem' }}>Reset Gallery</div>
+                      <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
+                        Restore default place folders (Kyoto, Iceland, Amalfi)
+                      </div>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        if (window.confirm('Are you sure you want to reset gallery folders to defaults?')) {
+                          await resetGalleryToDefaults();
+                          onDataChanged();
+                          showToast('Reset gallery to default folders.');
+                        }
+                      }}
+                      style={{
+                        background: 'rgba(239, 68, 68, 0.15)',
+                        border: '1px solid rgba(239, 68, 68, 0.4)',
+                        color: '#f87171',
+                        padding: '0.45rem 0.85rem',
+                        borderRadius: '4px',
+                        fontSize: '0.75rem',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Reset Defaults
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
