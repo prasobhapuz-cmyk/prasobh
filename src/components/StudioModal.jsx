@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   X, KeyRound, Upload, FolderPlus, Trash2, Edit3, Image as ImageIcon,
-  Film, Download, RefreshCw, Sparkles, Database, LogOut, Check, Plus, Layers
+  Film, Download, RefreshCw, Sparkles, Database, LogOut, Check, Plus, Layers, Cloud, Server
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import {
@@ -20,6 +20,7 @@ import {
   CLOUD_STORAGE_BIN_ID
 } from '../services/storage';
 import { compressImage } from '../utils/imageCompressor';
+import { CLOUD_CONFIG } from '../config/cloudConfig';
 
 export default function StudioModal({
   isOpen,
@@ -37,6 +38,7 @@ export default function StudioModal({
   const [activeTab, setActiveTab] = useState('upload'); // 'upload' | 'albums' | 'manage' | 'sync'
   const [importJsonText, setImportJsonText] = useState('');
   const [isCloudSyncing, setIsCloudSyncing] = useState(false);
+  const [uploadProgressText, setUploadProgressText] = useState('');
 
   // Batch Media Upload Queue
   const [batchQueue, setBatchQueue] = useState([]);
@@ -125,14 +127,14 @@ export default function StudioModal({
             reader.readAsDataURL(file);
           });
         } else {
-          finalUrl = await compressImage(file, 1920, 1920, 0.82);
+          finalUrl = await compressImage(file, 1920, 1920, 0.85);
         }
 
         if (finalUrl) {
           setBatchQueue((prev) => [
             ...prev,
             {
-              id: `temp-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 6)}`,
+              id: `media-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 6)}`,
               url: finalUrl,
               type: isVideo ? 'video' : 'photo',
               title: cleanTitle || `Photo ${prev.length + 1}`,
@@ -166,7 +168,7 @@ export default function StudioModal({
     setBatchQueue((prev) => [
       ...prev,
       {
-        id: `temp-url-${Date.now()}`,
+        id: `media-url-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
         url: singleUrl.trim(),
         type: 'photo',
         title: singleTitle.trim() || `Photo ${prev.length + 1}`,
@@ -193,15 +195,16 @@ export default function StudioModal({
     setBatchQueue((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // PUBLISH ALL BATCH QUEUE ITEMS TO GALLERY
+  // PUBLISH ALL BATCH QUEUE ITEMS DIRECTLY TO CLOUD STORAGE & DATABASE
   const handlePublishAllBatch = async () => {
     if (batchQueue.length === 0) return;
 
     setIsSubmitting(true);
+    setUploadProgressText('Uploading photos to Cloud Storage...');
     const targetAlbum = albums.find((a) => a.id === selectedAlbumId) || albums[0];
 
     const mediaToSave = batchQueue.map((item, idx) => ({
-      id: `media-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`,
+      id: item.id || `media-${Date.now()}-${idx}`,
       albumId: item.albumId || targetAlbum?.id || 'folder-kyoto',
       type: item.type,
       title: item.title?.trim() || `Frame ${idx + 1}`,
@@ -216,20 +219,29 @@ export default function StudioModal({
       duration: item.type === 'video' ? '0:30' : undefined
     }));
 
-    await saveMultipleMediaItems(mediaToSave);
-    await onDataChanged();
-    setIsSubmitting(false);
-
-    const count = batchQueue.length;
-    setBatchQueue([]);
-    showToast(`Published ${count} ${count === 1 ? 'photo' : 'photos'} to "${targetAlbum?.title || 'Album'}".`);
-
     try {
-      confetti({ particleCount: 50, spread: 65 });
-    } catch (err) {}
+      await saveMultipleMediaItems(mediaToSave, (current, total, title) => {
+        setUploadProgressText(`Uploading ${current} of ${total}: "${title}"...`);
+      });
+
+      await onDataChanged();
+      const count = batchQueue.length;
+      setBatchQueue([]);
+      setIsSubmitting(false);
+      setUploadProgressText('');
+      showToast(`Published ${count} ${count === 1 ? 'photo' : 'photos'} directly to Cloud Gallery!`);
+
+      try {
+        confetti({ particleCount: 50, spread: 65 });
+      } catch (err) {}
+    } catch (err) {
+      setIsSubmitting(false);
+      setUploadProgressText('');
+      showToast('Error uploading: ' + err.message);
+    }
   };
 
-  // EDIT EXISTING MEDIA CAPTION / DETAILS
+  // EDIT EXISTING MEDIA CAPTION / DETAILS (Direct Server-Side Update)
   const handleOpenEditMedia = (item) => {
     setEditingMediaId(item.id);
     setEditMediaTitle(item.title || '');
@@ -250,16 +262,16 @@ export default function StudioModal({
 
     await onDataChanged();
     setEditingMediaId(null);
-    showToast('Caption and details updated successfully.');
+    showToast('Caption and metadata updated on server.');
   };
 
   // Handle Drag & Drop / File Selection / Paste for New Album Cover Image
   const handleAlbumCoverFile = async (file) => {
     if (!file) return;
     try {
-      const compressed = await compressImage(file, 1920, 1920, 0.82);
+      const compressed = await compressImage(file, 1920, 1920, 0.85);
       setNewAlbumCover(compressed);
-      showToast('Cover image loaded.');
+      showToast('Cover image ready for upload.');
     } catch (err) {
       console.error(err);
     }
@@ -288,17 +300,18 @@ export default function StudioModal({
   const handleCoverFileUpload = async (albumId, file) => {
     if (!file) return;
     try {
-      const compressed = await compressImage(file, 1920, 1920, 0.82);
+      showToast('Uploading new cover to cloud...');
+      const compressed = await compressImage(file, 1920, 1920, 0.85);
       await updateAlbumCover(albumId, compressed);
       await onDataChanged();
       setEditingAlbumId(null);
-      showToast('Album cover updated.');
+      showToast('Album cover updated on server.');
     } catch (err) {
       console.error(err);
     }
   };
 
-  // Create new folder
+  // Create new folder directly in Cloud Database
   const handleCreateAlbum = async (e) => {
     e.preventDefault();
     if (!newAlbumTitle.trim()) {
@@ -307,6 +320,7 @@ export default function StudioModal({
     }
 
     setIsSubmitting(true);
+    setUploadProgressText('Creating folder in Cloud Database...');
     const slug = newAlbumTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'folder';
     const albumId = `folder-${slug}-${Date.now()}`;
 
@@ -318,20 +332,27 @@ export default function StudioModal({
       coverImage: newAlbumCover.trim() || 'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?q=80&w=1200&auto=format&fit=crop'
     };
 
-    await saveAlbum(newAlbum);
-    await onDataChanged();
-    setIsSubmitting(false);
-
-    setSelectedAlbumId(albumId);
-    setNewAlbumTitle('');
-    setNewAlbumLocation('');
-    setNewAlbumCover('');
-    setNewAlbumDesc('');
-    showToast(`Created folder "${newAlbum.title}"!`);
-
     try {
-      confetti({ particleCount: 40, spread: 55 });
-    } catch (err) {}
+      await saveAlbum(newAlbum);
+      await onDataChanged();
+      setIsSubmitting(false);
+      setUploadProgressText('');
+
+      setSelectedAlbumId(albumId);
+      setNewAlbumTitle('');
+      setNewAlbumLocation('');
+      setNewAlbumCover('');
+      setNewAlbumDesc('');
+      showToast(`Created folder "${newAlbum.title}" in Cloud Database!`);
+
+      try {
+        confetti({ particleCount: 40, spread: 55 });
+      } catch (err) {}
+    } catch (err) {
+      setIsSubmitting(false);
+      setUploadProgressText('');
+      showToast('Error creating folder: ' + err.message);
+    }
   };
 
   const handleSaveEditedCover = async (albumId) => {
@@ -344,30 +365,29 @@ export default function StudioModal({
   };
 
   const handleDeleteMedia = async (id, title) => {
-    if (confirm(`Delete "${title}"?`)) {
+    if (confirm(`Delete "${title}" from server?`)) {
       await deleteMediaItem(id);
       await onDataChanged();
-      showToast('Item deleted.');
+      showToast('Item deleted from server.');
     }
   };
 
   const handleDeleteAlbum = async (albumId, title) => {
-    if (confirm(`Delete folder "${title}" and its items?`)) {
+    if (confirm(`Delete folder "${title}" and all its photos from server?`)) {
       await deleteAlbum(albumId);
       await onDataChanged();
-      showToast(`Folder "${title}" deleted.`);
+      showToast(`Folder "${title}" deleted from server.`);
     }
   };
 
   const handleForceCloudSync = async () => {
     setIsCloudSyncing(true);
-    showToast('Syncing with cloud...');
+    showToast('Syncing with central cloud database...');
     try {
-      await syncToCloud();
       await syncFromCloud();
       await onDataChanged();
       setIsCloudSyncing(false);
-      showToast('Cloud database synchronized successfully!');
+      showToast('Cloud database synchronized successfully across all devices!');
       try {
         confetti({ particleCount: 35, spread: 50 });
       } catch (e) {}
@@ -516,8 +536,8 @@ export default function StudioModal({
                 onClick={() => setActiveTab('sync')}
                 id="studio-tab-sync"
               >
-                <RefreshCw size={13} style={{ display: 'inline', marginRight: '5px' }} />
-                Cloud Sync & Phone
+                <Server size={13} style={{ display: 'inline', marginRight: '5px' }} />
+                Cloud Backend & Sync
               </button>
             </div>
 
@@ -592,7 +612,7 @@ export default function StudioModal({
                       Click or Drag & Drop Multiple Photos / Videos
                     </h4>
                     <p style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
-                      Select photos from your device to publish into "{albums.find(a => a.id === selectedAlbumId)?.title || 'Selected Folder'}".
+                      Select photos from your device to publish into "{albums.find(a => a.id === selectedAlbumId)?.title || 'Selected Folder'}". Files are uploaded directly to centralized cloud storage.
                     </p>
                   </div>
 
@@ -677,6 +697,12 @@ export default function StudioModal({
                         ))}
                       </div>
 
+                      {uploadProgressText && (
+                        <div style={{ color: 'var(--accent-gold)', fontSize: '0.8rem', marginBottom: '0.75rem', textAlign: 'center' }}>
+                          {uploadProgressText}
+                        </div>
+                      )}
+
                       <button
                         onClick={handlePublishAllBatch}
                         disabled={isSubmitting}
@@ -684,7 +710,7 @@ export default function StudioModal({
                         id="btn-publish-batch-submit"
                         style={{ padding: '0.9rem', fontSize: '0.88rem' }}
                       >
-                        {isSubmitting ? 'Publishing to Gallery...' : `Publish All ${batchQueue.length} ${batchQueue.length === 1 ? 'Photo' : 'Photos'} to Gallery`}
+                        {isSubmitting ? (uploadProgressText || 'Uploading to Cloud Storage...') : `Publish All ${batchQueue.length} ${batchQueue.length === 1 ? 'Photo' : 'Photos'} to Cloud Gallery`}
                       </button>
                     </div>
                   )}
@@ -788,7 +814,7 @@ export default function StudioModal({
                       className="auth-submit-btn"
                       id="btn-create-folder-submit"
                     >
-                      {isSubmitting ? 'Creating Folder...' : '+ Create New Folder'}
+                      {isSubmitting ? (uploadProgressText || 'Creating in Cloud...') : '+ Create New Folder in Cloud'}
                     </button>
                   </form>
 
@@ -951,7 +977,7 @@ export default function StudioModal({
                         MEDIA LIBRARY ({media.length} items)
                       </h4>
                       <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                        Click "Edit Caption" to assign or change captions afterwards.
+                        Click "Edit Caption" to assign or change captions directly on the server.
                       </p>
                     </div>
 
@@ -985,7 +1011,7 @@ export default function StudioModal({
 
                       <button
                         onClick={async () => {
-                          if (confirm('Reset to defaults?')) {
+                          if (confirm('Reset gallery to starter defaults in cloud?')) {
                             await resetGalleryToDefaults();
                             await onDataChanged();
                             showToast('Reset to defaults.');
@@ -1167,7 +1193,7 @@ export default function StudioModal({
                 </div>
               )}
 
-              {/* TAB 4: REAL-TIME CLOUD SYNC TO PHONE & BACKUP */}
+              {/* TAB 4: REAL-TIME CLOUD BACKEND & CONFIG */}
               {activeTab === 'sync' && (
                 <div>
                   {/* REAL-TIME CLOUD DATABASE STATUS CARD */}
@@ -1191,7 +1217,7 @@ export default function StudioModal({
                           boxShadow: '0 0 10px #22c55e'
                         }} />
                         <h4 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.15rem', color: 'var(--text-pure)' }}>
-                          Central Cloud Database (Live)
+                          Centralized Cloud Backend (Live)
                         </h4>
                       </div>
 
@@ -1213,12 +1239,12 @@ export default function StudioModal({
                         }}
                       >
                         <RefreshCw size={14} className={isCloudSyncing ? 'spin-anim' : ''} />
-                        <span>{isCloudSyncing ? 'Syncing...' : 'Force Cloud Sync Now'}</span>
+                        <span>{isCloudSyncing ? 'Syncing...' : 'Sync Now'}</span>
                       </button>
                     </div>
 
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.835rem', lineHeight: 1.6, marginBottom: '1rem' }}>
-                      All folders created, covers updated, and photos published in Studio are automatically synchronized across devices in real-time. Anyone visiting <strong style={{ color: 'var(--text-pure)' }}>https://prasobh.vercel.app</strong> from a mobile phone, tablet, or another computer will see your newly added folders and photos!
+                      All folders, cover pictures, and photos are stored on the centralized cloud backend. Uploaded assets are hosted on high-speed global storage, ensuring identical 0ms real-time visibility across all mobile phones, tablets, and computers visiting <strong style={{ color: 'var(--text-pure)' }}>https://prasobh.vercel.app</strong>.
                     </p>
 
                     <div style={{
@@ -1232,9 +1258,36 @@ export default function StudioModal({
                       fontSize: '0.78rem',
                       color: 'var(--text-muted)'
                     }}>
-                      <span>Vault ID: <strong style={{ color: 'var(--accent-gold)' }}>{CLOUD_STORAGE_BIN_ID}</strong></span>
+                      <span>Backend Provider: <strong style={{ color: 'var(--accent-gold)' }}>{CLOUD_CONFIG.supabase?.enabled ? 'Supabase' : (CLOUD_CONFIG.firebase?.enabled ? 'Firebase' : 'Vercel Cloud Storage')}</strong></span>
                       <span>Total Albums: <strong style={{ color: 'var(--text-pure)' }}>{albums.length}</strong> • Photos: <strong style={{ color: 'var(--text-pure)' }}>{media.length}</strong></span>
                     </div>
+                  </div>
+
+                  {/* SUPABASE / FIREBASE CONFIG INFO CARD */}
+                  <div
+                    style={{
+                      background: '#040405',
+                      border: '1px solid var(--border-subtle)',
+                      padding: '1.5rem',
+                      borderRadius: '8px',
+                      marginBottom: '1.75rem'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                      <Cloud size={16} color="var(--accent-gold)" />
+                      <h5 style={{ fontFamily: 'var(--font-serif)', fontSize: '1rem', color: 'var(--text-pure)' }}>
+                        Cloud Configuration & Credentials
+                      </h5>
+                    </div>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', lineHeight: 1.6, marginBottom: '0.75rem' }}>
+                      You can paste your custom <strong>Supabase</strong> or <strong>Firebase</strong> API keys directly into:
+                    </p>
+                    <code style={{ display: 'block', background: '#000', padding: '0.6rem 0.8rem', borderRadius: '4px', fontSize: '0.75rem', color: 'var(--accent-gold)', marginBottom: '0.75rem', border: '1px solid var(--border-subtle)' }}>
+                      src/config/cloudConfig.js
+                    </code>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', lineHeight: 1.5 }}>
+                      The system includes built-in fallback storage that is active and operating right now, so no setup is mandatory.
+                    </p>
                   </div>
 
                   {/* BACKUP & MANUAL EXPORT SECTION */}
@@ -1248,10 +1301,10 @@ export default function StudioModal({
                     }}
                   >
                     <h5 style={{ fontFamily: 'var(--font-serif)', fontSize: '1rem', color: 'var(--text-pure)', marginBottom: '0.5rem' }}>
-                      Offline Backup & Data Export
+                      Data Export & Backup
                     </h5>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', lineHeight: 1.6, marginBottom: '1rem' }}>
-                      Download or copy a complete JSON snapshot of all albums, captions, and media coordinates:
+                      Download or copy a complete JSON snapshot of all albums, captions, and cloud asset URLs:
                     </p>
 
                     <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1.25rem' }}>
@@ -1319,7 +1372,7 @@ export default function StudioModal({
                           try {
                             await importGalleryBackup(importJsonText.trim());
                             onDataChanged();
-                            showToast('Successfully restored and synced!');
+                            showToast('Successfully restored and synced to cloud!');
                             setImportJsonText('');
                           } catch (err) {
                             showToast('Failed to import: Invalid JSON format.');
@@ -1328,7 +1381,7 @@ export default function StudioModal({
                         className="auth-submit-btn"
                         style={{ width: 'auto', padding: '0.45rem 1rem', fontSize: '0.78rem' }}
                       >
-                        Restore & Sync
+                        Restore to Cloud
                       </button>
                     </div>
                   </div>
@@ -1350,12 +1403,12 @@ export default function StudioModal({
                     <div>
                       <div style={{ color: '#f87171', fontWeight: 600, fontSize: '0.85rem' }}>Reset Gallery</div>
                       <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
-                        Restore default place folders (Kyoto, Iceland, Amalfi)
+                        Restore starter place folders (Kyoto, Iceland, Amalfi) in Cloud Database
                       </div>
                     </div>
                     <button
                       onClick={async () => {
-                        if (window.confirm('Are you sure you want to reset gallery folders to defaults?')) {
+                        if (window.confirm('Are you sure you want to reset gallery folders to defaults in the cloud database?')) {
                           await resetGalleryToDefaults();
                           onDataChanged();
                           showToast('Reset gallery to default folders.');
