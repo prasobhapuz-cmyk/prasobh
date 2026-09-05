@@ -1,8 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 
 const TOTAL_FRAMES = 72; // 0 to 71
-const BASE_FPS = 16;
-const FRAME_INTERVAL = 1000 / BASE_FPS;
+const CYCLE_DURATION = 6.5; // 6.5 seconds per natural harmonic breathing cycle
 
 export default function HeroSection() {
   const canvasRef = useRef(null);
@@ -32,19 +31,16 @@ export default function HeroSection() {
     };
   }, []);
 
-  // Continuous seamless loop that looks like an uninterrupted single live video
+  // Continuous seamless loop with harmonic physics & 60 FPS sub-frame interpolation
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d', { alpha: false });
 
     let animationFrameId;
-    let lastTime = 0;
-    let currentFrame = 0;
-    let direction = 1; // 1 = forward, -1 = reverse
-    let pauseCounter = 0;
+    let startTime = null;
 
-    const drawRotatedFrame = (img) => {
+    const drawRotatedFrame = (img, alpha = 1) => {
       if (!img || !img.complete || img.naturalWidth === 0) return;
       const cw = canvas.width;
       const ch = canvas.height;
@@ -57,60 +53,50 @@ export default function HeroSection() {
       const drawH = ih * scale;
 
       ctx.save();
+      ctx.globalAlpha = alpha;
       ctx.translate(cw / 2, ch / 2);
       ctx.rotate(Math.PI / 2); // Rotate horizontally (90 deg clockwise)
       ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
       ctx.restore();
     };
 
-    const render = (time) => {
-      if (!lastTime) lastTime = time;
-      const elapsed = time - lastTime;
+    const render = (now) => {
+      if (!startTime) startTime = now;
+      const elapsedSeconds = (now - startTime) / 1000;
+      const images = imagesRef.current;
 
-      // Subtle dynamic deceleration near the turnaround endpoints for organic human motion
-      const isNearEnd = currentFrame >= TOTAL_FRAMES - 4 || currentFrame <= 3;
-      const dynamicInterval = isNearEnd ? FRAME_INTERVAL * 1.35 : FRAME_INTERVAL;
+      if (images.length === TOTAL_FRAMES) {
+        const dpr = window.devicePixelRatio || 1;
+        const displayWidth = canvas.clientWidth;
+        const displayHeight = canvas.clientHeight;
 
-      if (elapsed >= dynamicInterval) {
-        lastTime = time - (elapsed % dynamicInterval);
-        const images = imagesRef.current;
+        if (canvas.width !== displayWidth * dpr || canvas.height !== displayHeight * dpr) {
+          canvas.width = displayWidth * dpr;
+          canvas.height = displayHeight * dpr;
+        }
 
-        if (images.length === TOTAL_FRAMES) {
-          const dpr = window.devicePixelRatio || 1;
-          const displayWidth = canvas.clientWidth;
-          const displayHeight = canvas.clientHeight;
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
 
-          if (canvas.width !== displayWidth * dpr || canvas.height !== displayHeight * dpr) {
-            canvas.width = displayWidth * dpr;
-            canvas.height = displayHeight * dpr;
-          }
+        // Continuous harmonic sine oscillation: position smoothly oscillates between frame 0.0 and 71.0
+        // Continuous 1st and 2nd derivatives guarantee zero jerk, zero jump cuts, and imperceptible looping
+        const phase = (elapsedSeconds % CYCLE_DURATION) / CYCLE_DURATION; // 0 to 1
+        const harmonicPos = 0.5 * (1 - Math.cos(2 * Math.PI * phase)); // smooth 0 -> 1 -> 0
+        const floatIndex = harmonicPos * (TOTAL_FRAMES - 1); // 0.0 to 71.0
 
-          ctx.imageSmoothingEnabled = true;
-          ctx.imageSmoothingQuality = 'high';
+        const baseIndex = Math.floor(floatIndex);
+        const nextIndex = Math.min(TOTAL_FRAMES - 1, baseIndex + 1);
+        const fraction = floatIndex - baseIndex;
 
-          // Draw current frame with crisp 100% opacity (no ghosting or jump cuts)
-          drawRotatedFrame(images[currentFrame]);
+        const imgA = images[baseIndex];
+        const imgB = images[nextIndex];
 
-          // Handle organic turnaround at endpoints
-          if (pauseCounter > 0) {
-            pauseCounter--;
-          } else {
-            const nextFrame = currentFrame + direction;
+        // Draw primary base frame
+        drawRotatedFrame(imgA, 1);
 
-            if (nextFrame >= TOTAL_FRAMES) {
-              // Reached peak dial turn: pause for 2 frames, then seamlessly reverse
-              direction = -1;
-              currentFrame = TOTAL_FRAMES - 2;
-              pauseCounter = 1;
-            } else if (nextFrame < 0) {
-              // Reached origin dial position: pause for 2 frames, then seamlessly advance forward
-              direction = 1;
-              currentFrame = 1;
-              pauseCounter = 1;
-            } else {
-              currentFrame = nextFrame;
-            }
-          }
+        // Micro sub-frame interpolation between adjacent frames for 60 FPS silkiness
+        if (fraction > 0.02 && baseIndex !== nextIndex) {
+          drawRotatedFrame(imgB, fraction);
         }
       }
 
