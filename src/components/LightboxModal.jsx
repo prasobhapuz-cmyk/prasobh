@@ -98,26 +98,25 @@ export default function LightboxModal({ activeItem, allItems, onClose, onNavigat
 
         {/* Caption & EXIF Details Drawer */}
         <div className="lightbox-caption-bar">
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '0.5rem',
-              color: 'var(--accent-gold)',
-              fontSize: '0.8rem',
-              letterSpacing: '0.1em',
-              marginBottom: '0.35rem'
-            }}
-          >
-            <MapPin size={13} />
-            <span>{activeItem.location}</span>
-            {activeItem.date && <span>• {activeItem.date}</span>}
-          </div>
-
-          {activeItem.title && !activeItem.title.startsWith('temp-') && (
-            <h3 className="lightbox-title">{activeItem.title}</h3>
+          {activeItem.location && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '0.5rem',
+                color: 'var(--accent-gold)',
+                fontSize: '0.8rem',
+                letterSpacing: '0.1em',
+                marginBottom: '0.35rem'
+              }}
+            >
+              <MapPin size={13} />
+              <span>{activeItem.location}</span>
+              {activeItem.date && <span>• {activeItem.date}</span>}
+            </div>
           )}
+
           {activeItem.caption && (
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', fontWeight: 300, lineHeight: 1.5 }}>
               {activeItem.caption}
