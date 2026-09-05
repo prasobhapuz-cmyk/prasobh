@@ -78,6 +78,29 @@ function openDB() {
   });
 }
 
+// Upload base64 image data to global CDN
+export async function uploadImageToCDN(dataUrl, filename) {
+  if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:')) {
+    return dataUrl;
+  }
+  try {
+    const res = await fetch('/api/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: dataUrl, filename: filename || `photo_${Date.now()}.jpg` })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.url) {
+        return data.url;
+      }
+    }
+  } catch (err) {
+    console.warn('CDN upload error:', err);
+  }
+  return dataUrl;
+}
+
 // Push local data to the cloud storage API
 export async function syncToCloud() {
   try {
@@ -182,11 +205,8 @@ export async function syncFromCloud() {
     const localMedia = await getLocalMedia();
 
     const mergedAlbumsMap = new Map();
-    // Default starter albums first
     DEFAULT_ALBUMS.forEach(a => mergedAlbumsMap.set(a.id, a));
-    // Cloud albums next
     cloudAlbums.forEach(a => mergedAlbumsMap.set(a.id, a));
-    // Local albums next (local custom edits take top priority)
     localAlbums.forEach(a => mergedAlbumsMap.set(a.id, a));
 
     const mergedMediaMap = new Map();
@@ -285,6 +305,11 @@ export async function getAlbums() {
 }
 
 export async function saveAlbum(album) {
+  // Ensure cover is uploaded to CDN if it's base64
+  if (album.coverImage && album.coverImage.startsWith('data:')) {
+    album.coverImage = await uploadImageToCDN(album.coverImage, `${album.title}_cover.jpg`);
+  }
+
   const db = await openDB();
   await new Promise((resolve, reject) => {
     const tx = db.transaction(ALBUMS_STORE, 'readwrite');
@@ -300,6 +325,11 @@ export async function saveAlbum(album) {
 }
 
 export async function updateAlbumCover(albumId, newCoverUrl) {
+  let finalCoverUrl = newCoverUrl;
+  if (newCoverUrl && newCoverUrl.startsWith('data:')) {
+    finalCoverUrl = await uploadImageToCDN(newCoverUrl, `cover_${albumId}.jpg`);
+  }
+
   const db = await openDB();
   await new Promise((resolve, reject) => {
     const tx = db.transaction(ALBUMS_STORE, 'readwrite');
@@ -308,7 +338,7 @@ export async function updateAlbumCover(albumId, newCoverUrl) {
     getReq.onsuccess = () => {
       const album = getReq.result;
       if (album) {
-        album.coverImage = newCoverUrl;
+        album.coverImage = finalCoverUrl;
         store.put(album);
       }
     };
@@ -369,6 +399,10 @@ export async function getAllMedia() {
 }
 
 export async function saveMediaItem(mediaItem) {
+  if (mediaItem.url && mediaItem.url.startsWith('data:')) {
+    mediaItem.url = await uploadImageToCDN(mediaItem.url, `${mediaItem.title || 'photo'}.jpg`);
+  }
+
   const db = await openDB();
   await new Promise((resolve, reject) => {
     const tx = db.transaction(MEDIA_STORE, 'readwrite');
@@ -384,6 +418,13 @@ export async function saveMediaItem(mediaItem) {
 }
 
 export async function saveMultipleMediaItems(itemsList) {
+  // Convert any base64 images in batch to CDN URLs
+  for (const item of itemsList) {
+    if (item.url && item.url.startsWith('data:')) {
+      item.url = await uploadImageToCDN(item.url, `${item.title || 'photo'}.jpg`);
+    }
+  }
+
   const db = await openDB();
   await new Promise((resolve, reject) => {
     const tx = db.transaction(MEDIA_STORE, 'readwrite');
