@@ -1,10 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 
-const TOTAL_FRAMES = 72;
-const BLEND_FRAMES = 16; // 16 frames of seamless cross-dissolve mix between end and beginning
-const LOOP_PERIOD = TOTAL_FRAMES - BLEND_FRAMES; // 56 frames per loop cycle
-const FPS = 16; // Slower, tranquil, cinematic cadence
-const FRAME_INTERVAL = 1000 / FPS;
+const TOTAL_FRAMES = 72; // 0 to 71
+const BASE_FPS = 16;
+const FRAME_INTERVAL = 1000 / BASE_FPS;
 
 export default function HeroSection() {
   const canvasRef = useRef(null);
@@ -34,7 +32,7 @@ export default function HeroSection() {
     };
   }, []);
 
-  // Continuous buttery smooth frame playback with seamless ending-to-beginning mix
+  // Continuous seamless loop that looks like an uninterrupted single live video
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -43,8 +41,10 @@ export default function HeroSection() {
     let animationFrameId;
     let lastTime = 0;
     let currentFrame = 0;
+    let direction = 1; // 1 = forward, -1 = reverse
+    let pauseCounter = 0;
 
-    const drawRotatedFrame = (img, alpha) => {
+    const drawRotatedFrame = (img) => {
       if (!img || !img.complete || img.naturalWidth === 0) return;
       const cw = canvas.width;
       const ch = canvas.height;
@@ -57,7 +57,6 @@ export default function HeroSection() {
       const drawH = ih * scale;
 
       ctx.save();
-      ctx.globalAlpha = alpha;
       ctx.translate(cw / 2, ch / 2);
       ctx.rotate(Math.PI / 2); // Rotate horizontally (90 deg clockwise)
       ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
@@ -68,8 +67,12 @@ export default function HeroSection() {
       if (!lastTime) lastTime = time;
       const elapsed = time - lastTime;
 
-      if (elapsed >= FRAME_INTERVAL) {
-        lastTime = time - (elapsed % FRAME_INTERVAL);
+      // Subtle dynamic deceleration near the turnaround endpoints for organic human motion
+      const isNearEnd = currentFrame >= TOTAL_FRAMES - 4 || currentFrame <= 3;
+      const dynamicInterval = isNearEnd ? FRAME_INTERVAL * 1.35 : FRAME_INTERVAL;
+
+      if (elapsed >= dynamicInterval) {
+        lastTime = time - (elapsed % dynamicInterval);
         const images = imagesRef.current;
 
         if (images.length === TOTAL_FRAMES) {
@@ -85,23 +88,29 @@ export default function HeroSection() {
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = 'high';
 
-          // SEAMLESS CROSSFADE MIX:
-          // When currentFrame is in [0, BLEND_FRAMES - 1], blend ending tail frames (56..71) with beginning head frames (0..15)
-          if (currentFrame < BLEND_FRAMES) {
-            const tailIndex = LOOP_PERIOD + currentFrame; // 56 to 71
-            const headIndex = currentFrame; // 0 to 15
-            const linearT = (currentFrame + 0.5) / BLEND_FRAMES;
-            const t = linearT * linearT * (3 - 2 * linearT); // Smoothstep curve
+          // Draw current frame with crisp 100% opacity (no ghosting or jump cuts)
+          drawRotatedFrame(images[currentFrame]);
 
-            // Draw base ending frame, then blend in beginning frame on top
-            drawRotatedFrame(images[tailIndex], 1);
-            drawRotatedFrame(images[headIndex], t);
+          // Handle organic turnaround at endpoints
+          if (pauseCounter > 0) {
+            pauseCounter--;
           } else {
-            // Pure video frame
-            drawRotatedFrame(images[currentFrame], 1);
-          }
+            const nextFrame = currentFrame + direction;
 
-          currentFrame = (currentFrame + 1) % LOOP_PERIOD;
+            if (nextFrame >= TOTAL_FRAMES) {
+              // Reached peak dial turn: pause for 2 frames, then seamlessly reverse
+              direction = -1;
+              currentFrame = TOTAL_FRAMES - 2;
+              pauseCounter = 1;
+            } else if (nextFrame < 0) {
+              // Reached origin dial position: pause for 2 frames, then seamlessly advance forward
+              direction = 1;
+              currentFrame = 1;
+              pauseCounter = 1;
+            } else {
+              currentFrame = nextFrame;
+            }
+          }
         }
       }
 
