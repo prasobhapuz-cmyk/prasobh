@@ -6,20 +6,31 @@ const CYCLE_DURATION = 6.5; // 6.5 seconds per natural harmonic breathing cycle
 export default function HeroSection() {
   const canvasRef = useRef(null);
   const imagesRef = useRef([]);
-  const [loadedCount, setLoadedCount] = useState(0);
+  const lastValidImgRef = useRef(null);
+  const [firstFrameReady, setFirstFrameReady] = useState(false);
 
-  // Preload all 72 frames in highest quality
+  // Preload all 72 frames in highest quality with immediate first-frame priority
   useEffect(() => {
     const loadedImages = [];
-    let count = 0;
 
-    for (let i = 0; i < TOTAL_FRAMES; i++) {
+    // Load Frame 0 with highest priority for instant render
+    const firstImg = new Image();
+    firstImg.src = '/hero_video_frames/rotate_this_video_horizontally_000.jpg';
+    firstImg.onload = () => {
+      lastValidImgRef.current = firstImg;
+      setFirstFrameReady(true);
+    };
+    loadedImages.push(firstImg);
+
+    // Preload remaining frames 1 to 71
+    for (let i = 1; i < TOTAL_FRAMES; i++) {
       const img = new Image();
       const frameNumber = String(i).padStart(3, '0');
       img.src = `/hero_video_frames/rotate_this_video_horizontally_${frameNumber}.jpg`;
       img.onload = () => {
-        count++;
-        setLoadedCount(count);
+        if (!lastValidImgRef.current) {
+          lastValidImgRef.current = img;
+        }
       };
       loadedImages.push(img);
     }
@@ -91,12 +102,22 @@ export default function HeroSection() {
         const imgA = images[baseIndex];
         const imgB = images[nextIndex];
 
-        // Draw primary base frame
-        drawRotatedFrame(imgA, 1);
+        // Ensure we always have a valid image to draw so there is NEVER a black flash or dropped frame
+        const primaryImg = (imgA && imgA.complete && imgA.naturalWidth > 0) ? imgA : lastValidImgRef.current;
 
-        // Micro sub-frame interpolation between adjacent frames for 60 FPS silkiness
-        if (fraction > 0.02 && baseIndex !== nextIndex) {
-          drawRotatedFrame(imgB, fraction);
+        if (primaryImg && primaryImg.complete && primaryImg.naturalWidth > 0) {
+          lastValidImgRef.current = primaryImg;
+          
+          // Clear canvas before rendering new composite frame
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+          // Draw primary base frame
+          drawRotatedFrame(primaryImg, 1);
+
+          // Micro sub-frame temporal interpolation between adjacent frames for 60 FPS silkiness
+          if (fraction > 0.02 && imgB && imgB.complete && imgB.naturalWidth > 0 && baseIndex !== nextIndex) {
+            drawRotatedFrame(imgB, fraction);
+          }
         }
       }
 
@@ -114,7 +135,14 @@ export default function HeroSection() {
     <section className="hero-section" id="hero">
       {/* High-Performance Hardware-Accelerated Video Background Canvas */}
       <div className="hero-video-bg-wrap">
-        <canvas ref={canvasRef} className="hero-video-canvas" />
+        <canvas
+          ref={canvasRef}
+          className="hero-video-canvas"
+          style={{
+            opacity: firstFrameReady ? 1 : 0,
+            transition: 'opacity 0.6s ease'
+          }}
+        />
         <div className="hero-video-vignette-overlay" />
       </div>
 
