@@ -304,15 +304,21 @@ export default function StudioModal({
 
       await onDataChanged();
       const count = batchQueue.length;
+      const targetFolderTitle = defaultAlbum?.folderName || defaultAlbum?.title || 'Selected Folder';
       setBatchQueue([]);
       setIsSubmitting(false);
       setUploadProgressText('');
       setUploadProgressPercent(0);
-      showToast(`Published ${count} ${count === 1 ? 'photo' : 'photos'} directly to Cloud Gallery!`);
+      showToast(`Published ${count} ${count === 1 ? 'photo' : 'photos'} directly to "${targetFolderTitle}"!`);
 
       try {
         confetti({ particleCount: 60, spread: 70, origin: { y: 0.6 } });
       } catch (err) {}
+
+      // Smoothly close Studio modal so the user immediately sees their photos in the folder
+      setTimeout(() => {
+        if (onClose) onClose();
+      }, 450);
     } catch (err) {
       setIsSubmitting(false);
       setUploadProgressText('');

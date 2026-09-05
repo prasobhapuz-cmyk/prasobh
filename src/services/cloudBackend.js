@@ -62,8 +62,8 @@ function notifySubscribers(data) {
   });
 }
 
-// 1. Upload raw image/video file to Cloud Storage Bucket
-export async function uploadAssetToCloud(fileOrDataUrl, filename = 'asset.jpg') {
+// 1. Upload raw image asset to Cloud Storage and return permanent stream URL (/api/image?id=...)
+export async function uploadAssetToCloud(fileOrDataUrl, filename = 'photo.jpg') {
   if (!fileOrDataUrl) return '';
 
   // If already a remote HTTPS URL or image stream URL, return as is
@@ -71,80 +71,24 @@ export async function uploadAssetToCloud(fileOrDataUrl, filename = 'asset.jpg') 
     return fileOrDataUrl;
   }
 
-  // Supabase Storage Upload (if enabled)
-  if (CLOUD_CONFIG.supabase?.enabled && CLOUD_CONFIG.supabase.url && CLOUD_CONFIG.supabase.anonKey) {
-    try {
-      const cleanName = `${Date.now()}-${filename.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
-      const uploadUrl = `${CLOUD_CONFIG.supabase.url}/storage/v1/object/${CLOUD_CONFIG.supabase.storageBucket}/${cleanName}`;
-
-      let bodyData;
-      if (typeof fileOrDataUrl === 'string') {
-        const base64 = fileOrDataUrl.replace(/^data:image\/\w+;base64,/, '');
-        bodyData = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-      } else {
-        bodyData = fileOrDataUrl;
-      }
-
-      const res = await fetch(uploadUrl, {
-        method: 'POST',
-        headers: {
-          'apikey': CLOUD_CONFIG.supabase.anonKey,
-          'Authorization': `Bearer ${CLOUD_CONFIG.supabase.anonKey}`,
-          'Content-Type': 'image/jpeg'
-        },
-        body: bodyData
-      });
-
-      if (res.ok) {
-        return `${CLOUD_CONFIG.supabase.url}/storage/v1/object/public/${CLOUD_CONFIG.supabase.storageBucket}/${cleanName}`;
-      }
-    } catch (sbErr) {
-      console.warn('Supabase storage upload error:', sbErr);
-    }
+  // Convert File / Blob to Data URL if needed
+  let dataUrlToSend = fileOrDataUrl;
+  if (typeof fileOrDataUrl !== 'string' && typeof FileReader !== 'undefined') {
+    dataUrlToSend = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(e.target?.result || '');
+      reader.onerror = () => resolve('');
+      reader.readAsDataURL(fileOrDataUrl);
+    });
   }
 
-  // Firebase Storage Upload (if enabled)
-  if (CLOUD_CONFIG.firebase?.enabled && CLOUD_CONFIG.firebase.storageBucket) {
-    try {
-      const cleanName = encodeURIComponent(`${Date.now()}_${filename}`);
-      const uploadUrl = `https://firebasestorage.googleapis.com/v0/b/${CLOUD_CONFIG.firebase.storageBucket}/o?name=${cleanName}`;
-
-      let bodyData;
-      if (typeof fileOrDataUrl === 'string') {
-        const base64 = fileOrDataUrl.replace(/^data:image\/\w+;base64,/, '');
-        bodyData = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-      } else {
-        bodyData = fileOrDataUrl;
-      }
-
-      const res = await fetch(uploadUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'image/jpeg' },
-        body: bodyData
-      });
-
-      if (res.ok) {
-        const json = await res.json();
-        return `https://firebasestorage.googleapis.com/v0/b/${CLOUD_CONFIG.firebase.storageBucket}/o/${cleanName}?alt=media&token=${json.downloadTokens}`;
-      }
-    } catch (fbErr) {
-      console.warn('Firebase storage upload error:', fbErr);
-    }
+  if (!dataUrlToSend || typeof dataUrlToSend !== 'string' || !dataUrlToSend.startsWith('data:')) {
+    return fileOrDataUrl;
   }
 
-  // Built-in Serverless Cloud Storage Uploader (Active Default)
-  try {
-    let dataUrlToSend = fileOrDataUrl;
-    if (typeof fileOrDataUrl !== 'string' && typeof FileReader !== 'undefined') {
-      dataUrlToSend = await new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onload = (e) => resolve(e.target?.result || '');
-        reader.onerror = () => resolve('');
-        reader.readAsDataURL(fileOrDataUrl);
-      });
-    }
-
-    if (typeof window !== 'undefined') {
+  // Strategy A: First-party serverless upload endpoint (/api/upload)
+  if (typeof window !== 'undefined') {
+    try {
       const res = await fetch('/api/upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -153,43 +97,59 @@ export async function uploadAssetToCloud(fileOrDataUrl, filename = 'asset.jpg') 
 
       if (res.ok) {
         const data = await res.json();
-        if (data && data.url) {
+        if (data && data.url && !data.url.startsWith('data:')) {
           return data.url;
         }
       }
+    } catch (apiErr) {
+      console.warn('API /api/upload error, trying direct cloud bin upload:', apiErr);
     }
-  } catch (err) {
-    console.warn('Serverless uploader error:', err);
   }
 
-  // Return user's actual image data
-  return fileOrDataUrl;
+  // Strategy B: Direct high-speed ExtendsClass bin creation (CORS open to all origins)
+  try {
+    const payload = JSON.stringify({
+      image: dataUrlToSend,
+      filename,
+      uploadedAt: new Date().toISOString()
+    });
+
+    const res = await fetch('https://extendsclass.com/api/json-storage/bin', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: payload
+    });
+
+    if (res.ok) {
+      const json = await res.json();
+      if (json && json.id) {
+        return `/api/image?id=${json.id}`;
+      }
+    }
+  } catch (directErr) {
+    console.error('Direct cloud bin upload error:', directErr);
+  }
+
+  return dataUrlToSend;
 }
 
 // 2. Fetch full gallery data from Centralized Cloud Database
 export async function fetchCloudGalleryData() {
   try {
-    // Supabase Database Query
-    if (CLOUD_CONFIG.supabase?.enabled && CLOUD_CONFIG.supabase.url && CLOUD_CONFIG.supabase.anonKey) {
+    // Strategy A: Try serverless /api/sync endpoint
+    if (typeof window !== 'undefined') {
       try {
-        const albumsRes = await fetch(`${CLOUD_CONFIG.supabase.url}/rest/v1/${CLOUD_CONFIG.supabase.albumsTable}?select=*`, {
-          headers: {
-            'apikey': CLOUD_CONFIG.supabase.anonKey,
-            'Authorization': `Bearer ${CLOUD_CONFIG.supabase.anonKey}`
-          }
-        });
-        const mediaRes = await fetch(`${CLOUD_CONFIG.supabase.url}/rest/v1/${CLOUD_CONFIG.supabase.mediaTable}?select=*`, {
-          headers: {
-            'apikey': CLOUD_CONFIG.supabase.anonKey,
-            'Authorization': `Bearer ${CLOUD_CONFIG.supabase.anonKey}`
-          }
+        const res = await fetch(`/api/sync?t=${Date.now()}`, {
+          headers: { 'Accept': 'application/json' },
+          cache: 'no-store'
         });
 
-        if (albumsRes.ok) {
-          const rawAlbums = await albumsRes.json();
-          const rawMedia = mediaRes.ok ? await mediaRes.json() : [];
-          if (Array.isArray(rawAlbums) && rawAlbums.length > 0) {
-            const normalizedAlbums = rawAlbums.map(a => ({
+        if (res.ok) {
+          const data = await res.json();
+          if (data && Array.isArray(data.albums) && data.albums.length > 0) {
+            const normalizedAlbums = data.albums.map(a => ({
               ...a,
               id: a.folderId || a.id,
               folderId: a.folderId || a.id,
@@ -198,28 +158,25 @@ export async function fetchCloudGalleryData() {
               userId: a.userId || 'user_prasobh_appus07',
               createdAt: a.createdAt || new Date().toISOString()
             }));
-            const normalizedMedia = rawMedia.map(m => ({
+            const normalizedMedia = (data.media || []).map(m => ({
               ...m,
               id: m.mediaId || m.id,
+              mediaId: m.mediaId || m.id,
               albumId: m.folderId || m.albumId,
               folderId: m.folderId || m.albumId,
               userId: m.userId || 'user_prasobh_appus07'
             }));
-            notifySubscribers({ albums: normalizedAlbums, media: normalizedMedia });
-            return { albums: normalizedAlbums, media: normalizedMedia };
+            const result = { albums: normalizedAlbums, media: normalizedMedia };
+            inMemoryData = result;
+            notifySubscribers(result);
+            return result;
           }
         }
-      } catch (sbErr) {
-        console.warn('Supabase fetch error:', sbErr);
-      }
+      } catch (apiErr) {}
     }
 
-    // Built-in Serverless Cloud Database Query
-    const endpoint = typeof window !== 'undefined' 
-      ? `/api/sync?t=${Date.now()}` 
-      : `https://extendsclass.com/api/json-storage/bin/bdbddaa?t=${Date.now()}`;
-
-    const res = await fetch(endpoint, {
+    // Strategy B: Direct fetch from central cloud bin
+    const res = await fetch(`https://extendsclass.com/api/json-storage/bin/bdbddaa?t=${Date.now()}`, {
       headers: { 'Accept': 'application/json' },
       cache: 'no-store'
     });
@@ -239,11 +196,13 @@ export async function fetchCloudGalleryData() {
         const normalizedMedia = (data.media || []).map(m => ({
           ...m,
           id: m.mediaId || m.id,
+          mediaId: m.mediaId || m.id,
           albumId: m.folderId || m.albumId,
           folderId: m.folderId || m.albumId,
           userId: m.userId || 'user_prasobh_appus07'
         }));
         const result = { albums: normalizedAlbums, media: normalizedMedia };
+        inMemoryData = result;
         notifySubscribers(result);
         return result;
       }
@@ -257,7 +216,7 @@ export async function fetchCloudGalleryData() {
 
 // 3. Push full updated gallery data to Centralized Cloud Database
 export async function pushCloudGalleryData(albums, media) {
-  const normalizedAlbums = albums.map(a => ({
+  const normalizedAlbums = (albums || []).map(a => ({
     ...a,
     id: a.folderId || a.id,
     folderId: a.folderId || a.id,
@@ -267,12 +226,14 @@ export async function pushCloudGalleryData(albums, media) {
     createdAt: a.createdAt || new Date().toISOString()
   }));
 
-  const normalizedMedia = media.map(m => ({
+  const normalizedMedia = (media || []).map(m => ({
     ...m,
     id: m.mediaId || m.id,
+    mediaId: m.mediaId || m.id,
     albumId: m.folderId || m.albumId,
     folderId: m.folderId || m.albumId,
-    userId: m.userId || 'user_prasobh_appus07'
+    userId: m.userId || 'user_prasobh_appus07',
+    createdAt: m.createdAt || new Date().toISOString()
   }));
 
   const payload = {
@@ -282,47 +243,43 @@ export async function pushCloudGalleryData(albums, media) {
   };
 
   // Immediate in-memory notification for instant 0ms UI update
+  inMemoryData = { albums: normalizedAlbums, media: normalizedMedia };
   notifySubscribers({ albums: normalizedAlbums, media: normalizedMedia });
 
-  // Supabase Push (if enabled)
-  if (CLOUD_CONFIG.supabase?.enabled && CLOUD_CONFIG.supabase.url && CLOUD_CONFIG.supabase.anonKey) {
+  // Strategy A: Serverless /api/sync endpoint
+  if (typeof window !== 'undefined') {
     try {
-      await fetch(`${CLOUD_CONFIG.supabase.url}/rest/v1/${CLOUD_CONFIG.supabase.albumsTable}`, {
+      const res = await fetch('/api/sync', {
         method: 'POST',
-        headers: {
-          'apikey': CLOUD_CONFIG.supabase.anonKey,
-          'Authorization': `Bearer ${CLOUD_CONFIG.supabase.anonKey}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'resolution=merge-duplicates'
-        },
-        body: JSON.stringify(normalizedAlbums)
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
       });
-    } catch (sbErr) {
-      console.warn('Supabase push error:', sbErr);
+
+      if (res.ok) {
+        const data = await res.json();
+        return { success: true, albums: data.albums || normalizedAlbums, media: data.media || normalizedMedia };
+      }
+    } catch (apiSyncErr) {
+      console.warn('API /api/sync error, falling back to direct cloud PUT:', apiSyncErr);
     }
   }
 
-  // Built-in Serverless Cloud Endpoint
-  const endpoint = typeof window !== 'undefined'
-    ? '/api/sync'
-    : 'https://extendsclass.com/api/json-storage/bin/bdbddaa';
-
-  const method = typeof window !== 'undefined' ? 'POST' : 'PUT';
-
+  // Strategy B: Direct cloud database PUT to ExtendsClass bin
   try {
-    const res = await fetch(endpoint, {
-      method,
+    const res = await fetch('https://extendsclass.com/api/json-storage/bin/bdbddaa', {
+      method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
 
     if (res.ok) {
       const data = await res.json();
-      return { success: true, albums: data.albums || normalizedAlbums, media: data.media || normalizedMedia };
+      return { success: true, albums: normalizedAlbums, media: normalizedMedia };
     }
-  } catch (err) {
-    console.error('Push to cloud error:', err);
+  } catch (directPutErr) {
+    console.error('Direct cloud database PUT error:', directPutErr);
   }
+
   return { success: false, albums: normalizedAlbums, media: normalizedMedia };
 }
 

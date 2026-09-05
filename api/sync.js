@@ -34,21 +34,38 @@ const DEFAULT_ALBUMS = [
 let memoryCache = null;
 
 function sanitizePayload(payload) {
-  const cleanAlbums = (payload.albums || []).map((alb) => ({
-    ...alb,
-    title: alb.title || 'Untitled Folder',
-    location: alb.location || '',
-    coverImage: alb.coverImage || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200&auto=format&fit=crop',
-    description: alb.description || ''
-  }));
+  const cleanAlbums = (payload.albums || []).map((alb) => {
+    const id = alb.folderId || alb.id || 'folder-kyoto';
+    const title = alb.folderName || alb.title || 'Untitled Folder';
+    return {
+      ...alb,
+      id,
+      folderId: id,
+      title,
+      folderName: title,
+      userId: alb.userId || 'user_prasobh_appus07',
+      location: alb.location || '',
+      coverImage: alb.coverImage || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200&auto=format&fit=crop',
+      description: alb.description || ''
+    };
+  });
 
-  const cleanMedia = (payload.media || []).map((item) => ({
-    ...item,
-    title: item.title || 'Photo',
-    location: item.location || '',
-    url: item.url || '',
-    albumId: item.albumId || cleanAlbums[0]?.id || 'folder-kyoto'
-  }));
+  const cleanMedia = (payload.media || []).map((item) => {
+    const mediaId = item.mediaId || item.id || `media-${Date.now()}`;
+    const targetFolderId = item.folderId || item.albumId || cleanAlbums[0]?.id || 'folder-kyoto';
+    return {
+      ...item,
+      id: mediaId,
+      mediaId,
+      albumId: targetFolderId,
+      folderId: targetFolderId,
+      userId: item.userId || 'user_prasobh_appus07',
+      title: item.title || 'Photo',
+      location: item.location || '',
+      url: item.url || '',
+      createdAt: item.createdAt || new Date().toISOString()
+    };
+  });
 
   return {
     albums: cleanAlbums,
