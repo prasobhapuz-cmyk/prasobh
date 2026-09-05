@@ -130,63 +130,15 @@ export default function AlbumsSection({ albums, media, onOpenFolder, onOpenStudi
                   {album.description && (
                     <p className="folder-card-caption">{album.description}</p>
                   )}
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '0.4rem' }}>
-                    <div className="folder-view-cue">
-                      <span>Open Album</span>
-                      <ArrowRight size={13} />
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (onOpenStudio) onOpenStudio(albumId);
-                      }}
-                      style={{
-                        background: 'rgba(212, 175, 55, 0.15)',
-                        border: '1px solid var(--border-gold)',
-                        color: 'var(--accent-gold)',
-                        fontSize: '0.7rem',
-                        padding: '0.25rem 0.6rem',
-                        borderRadius: '4px',
-                        cursor: 'pointer',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '0.25rem',
-                        fontWeight: 600
-                      }}
-                      title={`Add multiple photos to ${albumTitle}`}
-                    >
-                      <Plus size={11} />
-                      <span>+ Add Photos</span>
-                    </button>
+                  <div className="folder-view-cue">
+                    <span>Open Album</span>
+                    <ArrowRight size={13} />
                   </div>
                 </div>
               </div>
             </div>
           );
         })}
-      </div>
-
-      {/* Bottom Action Bar on Albums Section */}
-      <div style={{ textAlign: 'center', margin: '3rem 0 5rem', position: 'relative', zIndex: 5 }}>
-        <button
-          onClick={() => onOpenStudio && onOpenStudio()}
-          className="auth-submit-btn"
-          style={{
-            width: 'auto',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '0.6rem',
-            padding: '0.85rem 2rem',
-            fontSize: '0.88rem',
-            fontWeight: 700
-          }}
-          id="btn-albums-create-folder"
-        >
-          <FolderPlus size={16} />
-          <span>+ Create New Folder & Upload Photos</span>
-        </button>
       </div>
     </section>
   );

@@ -1,7 +1,7 @@
 // Client-side high-performance image compressor for gallery uploads
-// Optimizes camera photos to crisp ~25-45KB WebP/JPEG for instant cross-device sync without quality loss
+// Optimizes camera photos to crisp ~18-30KB WebP/JPEG for instant cross-device sync without quality loss
 
-export async function compressImage(fileOrDataUrl, maxWidth = 1200, maxHeight = 1200, quality = 0.75) {
+export async function compressImage(fileOrDataUrl, maxWidth = 1080, maxHeight = 1080, quality = 0.72) {
   if (!fileOrDataUrl) return '';
 
   // If already a remote HTTPS URL, return as is

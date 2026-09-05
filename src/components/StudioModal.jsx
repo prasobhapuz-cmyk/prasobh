@@ -923,106 +923,19 @@ export default function StudioModal({
                     </div>
                   </div>
 
-                  {/* MULTI-FILE ACTION BAR & DROPZONE */}
-                  <div
-                    style={{
-                      background: 'rgba(212, 175, 55, 0.05)',
-                      border: '1px solid var(--border-gold)',
-                      borderRadius: '8px',
-                      padding: '1.25rem',
-                      marginBottom: '1.25rem',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      textAlign: 'center',
-                      gap: '0.75rem'
+                  {/* UNIFIED MULTI-FILE DROPZONE & SELECTOR */}
+                  <input
+                    type="file"
+                    id="studio-multi-file-input"
+                    accept="image/*,video/*"
+                    multiple={true}
+                    style={{ display: 'none' }}
+                    onChange={(e) => {
+                      handleMultipleFiles(e.target.files);
+                      e.target.value = '';
                     }}
-                  >
-                    <input
-                      type="file"
-                      id="studio-instant-multi-file-input"
-                      accept="image/*,video/*"
-                      multiple={true}
-                      style={{ display: 'none' }}
-                      onChange={(e) => {
-                        handleDirectUploadMultipleFiles(e.target.files);
-                        e.target.value = '';
-                      }}
-                    />
+                  />
 
-                    <input
-                      type="file"
-                      id="studio-multi-file-input"
-                      accept="image/*,video/*"
-                      multiple={true}
-                      style={{ display: 'none' }}
-                      onChange={(e) => {
-                        handleMultipleFiles(e.target.files);
-                        e.target.value = '';
-                      }}
-                    />
-
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <Sparkles size={20} color="var(--accent-gold)" />
-                      <h4 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.25rem', color: 'var(--text-pure)', margin: 0 }}>
-                        Add Multiple Photos to "{albums.find(a => (a.folderId || a.id) === selectedAlbumId)?.title || 'Selected Folder'}"
-                      </h4>
-                    </div>
-
-                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', maxWidth: '580px', margin: 0 }}>
-                      Select 10, 20, 50+ photos from your phone or computer. All files are compressed and uploaded simultaneously in parallel to central cloud storage.
-                    </p>
-
-                    {/* TWO CONVENIENT MODES: DIRECT INSTANT UPLOAD OR STAGE TO QUEUE */}
-                    <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'center', marginTop: '0.5rem' }}>
-                      <button
-                        type="button"
-                        onClick={() => document.getElementById('studio-instant-multi-file-input').click()}
-                        disabled={isSubmitting}
-                        className="auth-submit-btn"
-                        id="btn-direct-upload-multi-photos"
-                        style={{
-                          width: 'auto',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '0.6rem',
-                          padding: '0.85rem 1.85rem',
-                          fontWeight: 800,
-                          fontSize: '0.9rem',
-                          background: 'linear-gradient(135deg, #d4af37, #f3e5ab)',
-                          color: '#000',
-                          boxShadow: '0 4px 20px rgba(212, 175, 55, 0.35)'
-                        }}
-                      >
-                        <Upload size={17} />
-                        <span>⚡ Choose Multiple Photos (Upload Now)</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => document.getElementById('studio-multi-file-input').click()}
-                        disabled={isSubmitting}
-                        style={{
-                          background: 'rgba(255, 255, 255, 0.06)',
-                          border: '1px solid var(--border-medium)',
-                          color: 'var(--text-pure)',
-                          fontSize: '0.82rem',
-                          padding: '0.75rem 1.25rem',
-                          borderRadius: '4px',
-                          cursor: 'pointer',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '0.45rem'
-                        }}
-                        title="Add to queue first to customize individual titles and captions"
-                      >
-                        <Layers size={15} />
-                        <span>Stage to Queue & Edit Captions</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* MULTI-FILE DRAG & DROP ZONE */}
                   <div
                     className={`upload-dropzone ${isDragging ? 'dragover' : ''}`}
                     onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
@@ -1031,22 +944,54 @@ export default function StudioModal({
                       e.preventDefault();
                       setIsDragging(false);
                       if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                        handleDirectUploadMultipleFiles(e.dataTransfer.files);
+                        handleMultipleFiles(e.dataTransfer.files);
                       }
                     }}
-                    onClick={() => document.getElementById('studio-instant-multi-file-input').click()}
-                    style={{ position: 'relative', overflow: 'hidden', padding: '1.75rem 1.5rem', cursor: 'pointer', marginBottom: '1.25rem' }}
+                    onClick={() => document.getElementById('studio-multi-file-input').click()}
+                    style={{
+                      position: 'relative',
+                      overflow: 'hidden',
+                      padding: '2rem 1.5rem',
+                      cursor: 'pointer',
+                      marginBottom: '1.25rem',
+                      border: '1px dashed var(--border-gold)',
+                      borderRadius: '8px',
+                      background: 'rgba(212, 175, 55, 0.03)',
+                      textAlign: 'center'
+                    }}
                   >
-                    <Layers size={32} color="var(--accent-gold)" style={{ margin: '0 auto 0.5rem' }} />
-                    <h5 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.05rem', marginBottom: '0.3rem', color: 'var(--text-pure)' }}>
-                      Or Drag & Drop Multiple Photos or Whole Folders Here
-                    </h5>
-                    <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', margin: 0 }}>
-                      Supports JPEG, PNG, WebP, HEIC, Video. Hold <kbd style={{ background: 'rgba(255,255,255,0.1)', padding: '2px 5px', borderRadius: '3px' }}>Shift</kbd> / <kbd style={{ background: 'rgba(255,255,255,0.1)', padding: '2px 5px', borderRadius: '3px' }}>Ctrl</kbd> to select multiple, or paste with <kbd style={{ background: 'rgba(255,255,255,0.1)', padding: '2px 5px', borderRadius: '3px' }}>Ctrl+V</kbd>.
+                    <Layers size={36} color="var(--accent-gold)" style={{ margin: '0 auto 0.75rem' }} />
+                    <h4 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.2rem', marginBottom: '0.4rem', color: 'var(--text-pure)' }}>
+                      Select Multiple Photos for "{albums.find(a => (a.folderId || a.id) === selectedAlbumId)?.title || 'Selected Folder'}"
+                    </h4>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', maxWidth: '520px', margin: '0 auto 1.25rem', lineHeight: 1.5 }}>
+                      Choose 5, 10, 20+ photos at once or drag entire folders from your phone or computer.
                     </p>
+
+                    <button
+                      type="button"
+                      disabled={isSubmitting}
+                      className="auth-submit-btn"
+                      id="btn-select-multi-photos"
+                      style={{
+                        width: 'auto',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.6rem',
+                        padding: '0.85rem 2rem',
+                        fontWeight: 700,
+                        fontSize: '0.9rem',
+                        background: 'linear-gradient(135deg, #d4af37, #f3e5ab)',
+                        color: '#000',
+                        boxShadow: '0 4px 20px rgba(212, 175, 55, 0.25)'
+                      }}
+                    >
+                      <Upload size={17} />
+                      <span>+ Choose Multiple Photos</span>
+                    </button>
                   </div>
 
-                  {/* Animated Progress Bar during Direct Batch Upload */}
+                  {/* Animated Progress Bar during Upload */}
                   {isSubmitting && (
                     <div style={{
                       background: 'rgba(0, 0, 0, 0.85)',
@@ -1083,21 +1028,6 @@ export default function StudioModal({
                       </div>
                     </div>
                   )}
-
-                  {/* Or add via direct URL */}
-                  <form onSubmit={handleAddUrlToQueue} style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.75rem' }}>
-                    <input
-                      type="text"
-                      value={singleUrl}
-                      onChange={(e) => setSingleUrl(e.target.value)}
-                      placeholder="Or paste direct Image URLs (separated by comma, space or newline)"
-                      className="form-input"
-                      style={{ flex: 1 }}
-                    />
-                    <button type="submit" className="auth-submit-btn" style={{ width: 'auto', padding: '0.55rem 1.1rem' }}>
-                      + Add URL
-                    </button>
-                  </form>
 
                   {/* BATCH QUEUE CARDS & BATCH TOOLS */}
                   {batchQueue.length > 0 && (

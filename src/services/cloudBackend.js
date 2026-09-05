@@ -86,50 +86,28 @@ export async function uploadAssetToCloud(fileOrDataUrl, filename = 'photo.jpg') 
     return fileOrDataUrl;
   }
 
-  // Strategy A: First-party serverless upload endpoint (/api/upload)
+  // Serverless upload endpoint (/api/upload) with retry & exponential backoff
   if (typeof window !== 'undefined') {
-    try {
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: dataUrlToSend, filename })
-      });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await fetch('/api/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: dataUrlToSend, filename })
+        });
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.url && !data.url.startsWith('data:')) {
-          return data.url;
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.url && !data.url.startsWith('data:')) {
+            return data.url;
+          }
+        }
+      } catch (apiErr) {
+        if (attempt === 0) {
+          await new Promise(r => setTimeout(r, 250));
         }
       }
-    } catch (apiErr) {
-      console.warn('API /api/upload error, trying direct cloud bin upload:', apiErr);
     }
-  }
-
-  // Strategy B: Direct high-speed ExtendsClass bin creation (CORS open to all origins)
-  try {
-    const payload = JSON.stringify({
-      image: dataUrlToSend,
-      filename,
-      uploadedAt: new Date().toISOString()
-    });
-
-    const res = await fetch('https://extendsclass.com/api/json-storage/bin', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: payload
-    });
-
-    if (res.ok) {
-      const json = await res.json();
-      if (json && json.id) {
-        return `/api/image?id=${json.id}`;
-      }
-    }
-  } catch (directErr) {
-    console.error('Direct cloud bin upload error:', directErr);
   }
 
   return dataUrlToSend;
@@ -359,11 +337,11 @@ export async function saveCloudMediaItems(itemsList, onProgress) {
   const totalCount = itemsList.length;
   let completedCount = 0;
 
-  // Process items in parallel batches with concurrency of 3
-  const concurrency = 3;
+  // Process items in paced parallel workers (concurrency of 2)
+  const concurrency = 2;
   const processedItems = new Array(totalCount);
 
-  // Worker pool for concurrent uploads
+  // Worker pool for paced concurrent uploads
   const queue = itemsList.map((item, index) => ({ item, index }));
   
   const worker = async () => {
@@ -400,13 +378,16 @@ export async function saveCloudMediaItems(itemsList, onProgress) {
         aspectRatio: item.aspectRatio || 'landscape',
         createdAt: item.createdAt || new Date().toISOString(),
         caption: item.caption || '',
-        exif: item.exif || { camera: '' }
+        exif: item.exif || { camera: item.camera || '' }
       };
 
       completedCount++;
       if (onProgress) {
         onProgress(completedCount, totalCount, currentTitle);
       }
+
+      // Small pacing delay to avoid SSL connection saturation
+      await new Promise(r => setTimeout(r, 60));
     }
   };
 

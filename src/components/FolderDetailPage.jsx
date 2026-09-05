@@ -177,10 +177,10 @@ export default function FolderDetailPage({ album, media, onBack, onOpenMedia, on
             onClick={handleTriggerFilePicker}
             className="btn-folder-add-photos"
             id="btn-folder-add-photos"
-            title="Select & Add Multiple Photos to this Folder"
+            title="Add Photos to this Folder"
           >
             <Plus size={14} />
-            <span>+ Add Multiple Photos</span>
+            <span>+ Add Photos</span>
           </button>
         </div>
       </div>
@@ -224,70 +224,56 @@ export default function FolderDetailPage({ album, media, onBack, onOpenMedia, on
               id="btn-empty-add-photos"
             >
               <Layers size={16} />
-              <span>+ Select Multiple Photos for {albumTitle}</span>
+              <span>+ Select Photos for {albumTitle}</span>
             </button>
           </div>
         ) : (
-          <>
-            <div className="folder-media-grid">
-              {folderMedia.map((item) => (
-                <div
-                  key={item.id}
-                  className="folder-media-card"
-                  onClick={() => onOpenMedia(item, folderMedia)}
-                  id={`folder-item-${item.id}`}
-                >
-                  {item.type === 'video' ? (
-                    <div className="folder-video-wrap">
-                      <video
-                        src={item.url}
-                        className="folder-media-asset"
-                        muted
-                        loop
-                        playsInline
-                        preload="metadata"
-                      />
-                      <div className="folder-video-play-indicator">
-                        <Play size={20} fill="#fff" />
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="folder-photo-wrap">
-                      <img
-                        src={item.url}
-                        alt={item.title}
-                        className="folder-media-asset"
-                        loading="lazy"
-                      />
-                    </div>
-                  )}
-
-                  {(item.caption || item.exif?.camera) && (
-                    <div className="folder-media-caption-bar">
-                      {item.exif?.camera && (
-                        <div className="folder-media-meta">{item.exif.camera}</div>
-                      )}
-                      {item.caption && (
-                        <div className="folder-media-note">{item.caption}</div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            {/* Bottom Add More Photos CTA */}
-            <div style={{ textAlign: 'center', margin: '4rem 0 2rem' }}>
-              <button
-                onClick={handleTriggerFilePicker}
-                className="btn-folder-add-more"
-                id="btn-folder-add-more"
+          <div className="folder-media-grid">
+            {folderMedia.map((item) => (
+              <div
+                key={item.id}
+                className="folder-media-card"
+                onClick={() => onOpenMedia(item, folderMedia)}
+                id={`folder-item-${item.id}`}
               >
-                <Plus size={15} />
-                <span>+ Add More Photos to {albumTitle}</span>
-              </button>
-            </div>
-          </>
+                {item.type === 'video' ? (
+                  <div className="folder-video-wrap">
+                    <video
+                      src={item.url}
+                      className="folder-media-asset"
+                      muted
+                      loop
+                      playsInline
+                      preload="metadata"
+                    />
+                    <div className="folder-video-play-indicator">
+                      <Play size={20} fill="#fff" />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="folder-photo-wrap">
+                    <img
+                      src={item.url}
+                      alt={item.title}
+                      className="folder-media-asset"
+                      loading="lazy"
+                    />
+                  </div>
+                )}
+
+                {(item.caption || item.exif?.camera) && (
+                  <div className="folder-media-caption-bar">
+                    {item.exif?.camera && (
+                      <div className="folder-media-meta">{item.exif.camera}</div>
+                    )}
+                    {item.caption && (
+                      <div className="folder-media-note">{item.caption}</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         )}
       </div>
 

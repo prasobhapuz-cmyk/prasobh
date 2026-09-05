@@ -3,49 +3,70 @@
 
 import https from 'https';
 
-function createCloudImageBin(dataUrl, filename = 'photo.jpg') {
+function createCloudImageBin(dataUrl, filename = 'photo.jpg', retries = 2) {
   return new Promise((resolve, reject) => {
-    const payload = JSON.stringify({
-      image: dataUrl,
-      filename,
-      uploadedAt: new Date().toISOString()
-    });
+    const attempt = (remainingRetries) => {
+      const payload = JSON.stringify({
+        image: dataUrl,
+        filename,
+        uploadedAt: new Date().toISOString()
+      });
 
-    const req = https.request({
-      hostname: 'extendsclass.com',
-      path: '/api/json-storage/bin',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-        'Content-Length': Buffer.byteLength(payload)
-      },
-      timeout: 10000
-    }, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try {
-          const json = JSON.parse(data);
-          if (json && json.id) {
-            resolve(json.id);
-          } else {
-            reject(new Error('No ID in bin response: ' + data));
+      const req = https.request({
+        hostname: 'extendsclass.com',
+        path: '/api/json-storage/bin',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+          'Content-Length': Buffer.byteLength(payload)
+        },
+        timeout: 12000
+      }, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(data);
+            if (json && json.id) {
+              resolve(json.id);
+            } else if (remainingRetries > 0) {
+              setTimeout(() => attempt(remainingRetries - 1), 400);
+            } else {
+              reject(new Error('No ID in bin response: ' + data));
+            }
+          } catch (e) {
+            if (remainingRetries > 0) {
+              setTimeout(() => attempt(remainingRetries - 1), 400);
+            } else {
+              reject(e);
+            }
           }
-        } catch (e) {
-          reject(e);
+        });
+      });
+
+      req.on('error', (err) => {
+        if (remainingRetries > 0) {
+          setTimeout(() => attempt(remainingRetries - 1), 400);
+        } else {
+          reject(err);
         }
       });
-    });
 
-    req.on('error', reject);
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error('Bin creation timed out'));
-    });
+      req.on('timeout', () => {
+        req.destroy();
+        if (remainingRetries > 0) {
+          setTimeout(() => attempt(remainingRetries - 1), 400);
+        } else {
+          reject(new Error('Bin creation timed out'));
+        }
+      });
 
-    req.write(payload);
-    req.end();
+      req.write(payload);
+      req.end();
+    };
+
+    attempt(retries);
   });
 }
 

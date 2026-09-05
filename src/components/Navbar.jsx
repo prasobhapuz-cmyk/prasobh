@@ -47,7 +47,7 @@ export default function Navbar({ onOpenStudio, onBackToHome, isInsideFolder }) {
           </nav>
         )}
 
-        {/* Actions (Add Photos / Studio Access / Back) */}
+        {/* Actions (Studio Access / Back) */}
         <div className="nav-actions">
           {isInsideFolder && (
             <button
@@ -63,27 +63,11 @@ export default function Navbar({ onOpenStudio, onBackToHome, isInsideFolder }) {
           <button
             onClick={() => onOpenStudio && onOpenStudio()}
             className="btn-studio"
-            style={{
-              background: 'rgba(212, 175, 55, 0.12)',
-              borderColor: 'var(--border-gold)',
-              color: 'var(--accent-gold)',
-              fontWeight: 700
-            }}
-            id="nav-btn-upload-photos"
-            title="Upload Multiple Photos"
-          >
-            <Plus size={13} />
-            <span>+ Add Photos</span>
-          </button>
-
-          <button
-            onClick={() => onOpenStudio && onOpenStudio()}
-            className="btn-studio"
             id="btn-open-studio"
             title="Studio Portal & Settings"
           >
             <Lock size={12} />
-            <span>Studio</span>
+            <span>Studio Access</span>
           </button>
         </div>
       </div>
