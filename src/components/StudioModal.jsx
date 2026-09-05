@@ -52,12 +52,13 @@ export default function StudioModal({
   const [singleUrl, setSingleUrl] = useState('');
   const [singleTitle, setSingleTitle] = useState('');
 
-  // Album Form State
+  // Album Form State & Multi-Photo Staging
   const [newAlbumTitle, setNewAlbumTitle] = useState('');
   const [newAlbumLocation, setNewAlbumLocation] = useState('');
   const [newAlbumCover, setNewAlbumCover] = useState('');
   const [newAlbumDesc, setNewAlbumDesc] = useState('');
   const [isAlbumCoverDragging, setIsAlbumCoverDragging] = useState(false);
+  const [newFolderPhotos, setNewFolderPhotos] = useState([]); // Array of { url, title, type, file } for new folder batch creation
 
   // Editing existing album cover
   const [editingAlbumId, setEditingAlbumId] = useState(null);
@@ -93,6 +94,7 @@ export default function StudioModal({
       // If user is typing in a text field for cover URL or caption, avoid intercepting text
       const target = e.target;
       const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
+      if (isInput && target.type === 'text') return;
       
       const items = e.clipboardData?.items;
       if (!items || items.length === 0) return;
@@ -108,7 +110,10 @@ export default function StudioModal({
       if (imageFiles.length > 0) {
         if (activeTab === 'upload') {
           e.preventDefault();
-          handleMultipleFiles(imageFiles);
+          handleDirectUploadMultipleFiles(imageFiles);
+        } else if (activeTab === 'albums') {
+          e.preventDefault();
+          handleNewFolderMultipleFiles(imageFiles);
         }
       }
     };
@@ -141,7 +146,95 @@ export default function StudioModal({
     showToast('Locked Studio access.');
   };
 
-  // HIGH-PERFORMANCE MULTIPLE FILE UPLOAD HANDLER
+  // 1. DIRECT INSTANT MULTI-PHOTO UPLOADER (No manual staging needed!)
+  const handleDirectUploadMultipleFiles = async (files, targetFolderIdOverride = null) => {
+    if (!files || files.length === 0) return;
+
+    const filesArray = Array.from(files);
+    const count = filesArray.length;
+    const targetFolderId = targetFolderIdOverride || selectedAlbumId || albums[0]?.folderId || albums[0]?.id || 'folder-kyoto';
+    const targetFolder = albums.find(a => (a.folderId || a.id) === targetFolderId);
+    const targetTitle = targetFolder?.folderName || targetFolder?.title || 'Selected Folder';
+
+    setIsSubmitting(true);
+    setUploadProgressPercent(5);
+    setUploadProgressText(`Optimizing ${count} ${count === 1 ? 'photo' : 'photos'}...`);
+    showToast(`Processing ${count} photos for "${targetTitle}"...`);
+
+    try {
+      const processedItems = await Promise.all(
+        filesArray.map(async (file, index) => {
+          const isVideo = file.type && file.type.startsWith('video');
+          const nameWithoutExt = file.name ? file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ') : '';
+          const cleanTitle = nameWithoutExt ? (nameWithoutExt.charAt(0).toUpperCase() + nameWithoutExt.slice(1)) : `Photo ${index + 1}`;
+
+          let finalUrl = '';
+          if (isVideo) {
+            finalUrl = await new Promise((resolve) => {
+              const reader = new FileReader();
+              reader.onload = (e) => resolve(e.target?.result || '');
+              reader.onerror = () => resolve('');
+              reader.readAsDataURL(file);
+            });
+          } else {
+            finalUrl = await compressImage(file, 1200, 1200, 0.75);
+          }
+
+          if (!finalUrl) return null;
+
+          return {
+            id: `media-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 6)}`,
+            mediaId: `media-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 6)}`,
+            url: finalUrl,
+            type: isVideo ? 'video' : 'photo',
+            title: cleanTitle,
+            caption: '',
+            camera: batchCamera || '',
+            albumId: targetFolderId,
+            folderId: targetFolderId,
+            aspectRatio: 'landscape',
+            createdAt: new Date().toISOString()
+          };
+        })
+      );
+
+      const validItems = processedItems.filter(Boolean);
+      if (validItems.length === 0) {
+        setIsSubmitting(false);
+        setUploadProgressText('');
+        return;
+      }
+
+      setUploadProgressText(`Uploading ${validItems.length} photos to Cloud Storage...`);
+      await saveMultipleMediaItems(validItems, (current, total, title) => {
+        const pct = Math.max(10, Math.round((current / total) * 100));
+        setUploadProgressPercent(pct);
+        setUploadProgressText(`Uploading ${current} of ${total} (${pct}%): "${title}"...`);
+      });
+
+      await onDataChanged();
+      setIsSubmitting(false);
+      setUploadProgressText('');
+      setUploadProgressPercent(0);
+      showToast(`Uploaded ${validItems.length} photos to "${targetTitle}"!`);
+
+      try {
+        confetti({ particleCount: 65, spread: 70, origin: { y: 0.6 } });
+      } catch (err) {}
+
+      setTimeout(() => {
+        if (onClose) onClose();
+      }, 450);
+    } catch (err) {
+      console.error('Direct upload error:', err);
+      setIsSubmitting(false);
+      setUploadProgressText('');
+      setUploadProgressPercent(0);
+      showToast('Error uploading: ' + err.message);
+    }
+  };
+
+  // 2. MULTI-FILE STAGING HANDLER FOR QUEUE
   const handleMultipleFiles = async (files) => {
     if (!files || files.length === 0) return;
 
@@ -174,13 +267,16 @@ export default function StudioModal({
 
           return {
             id: `media-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 6)}`,
+            mediaId: `media-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 6)}`,
             url: finalUrl,
             type: isVideo ? 'video' : 'photo',
             title: cleanTitle,
             caption: '',
             camera: batchCamera || '',
             albumId: targetFolderId,
-            folderId: targetFolderId
+            folderId: targetFolderId,
+            aspectRatio: 'landscape',
+            createdAt: new Date().toISOString()
           };
         })
       );
@@ -196,38 +292,139 @@ export default function StudioModal({
     }
   };
 
-  const handleDrop = (e) => {
+  // 3. MULTI-PHOTO STAGING FOR NEW FOLDER CREATION
+  const handleNewFolderMultipleFiles = async (files) => {
+    if (!files || files.length === 0) return;
+    const filesArray = Array.from(files);
+    showToast(`Processing ${filesArray.length} photos for new folder...`);
+
+    try {
+      const processed = await Promise.all(
+        filesArray.map(async (file, index) => {
+          const isVideo = file.type && file.type.startsWith('video');
+          const nameWithoutExt = file.name ? file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ') : '';
+          const cleanTitle = nameWithoutExt ? (nameWithoutExt.charAt(0).toUpperCase() + nameWithoutExt.slice(1)) : `Photo ${index + 1}`;
+
+          let finalUrl = '';
+          if (isVideo) {
+            finalUrl = await new Promise((resolve) => {
+              const reader = new FileReader();
+              reader.onload = (e) => resolve(e.target?.result || '');
+              reader.onerror = () => resolve('');
+              reader.readAsDataURL(file);
+            });
+          } else {
+            finalUrl = await compressImage(file, 1200, 1200, 0.75);
+          }
+
+          if (!finalUrl) return null;
+
+          return {
+            id: `media-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 6)}`,
+            mediaId: `media-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 6)}`,
+            url: finalUrl,
+            type: isVideo ? 'video' : 'photo',
+            title: cleanTitle,
+            aspectRatio: 'landscape'
+          };
+        })
+      );
+
+      const valid = processed.filter(Boolean);
+      if (valid.length > 0) {
+        setNewFolderPhotos((prev) => [...prev, ...valid]);
+        if (!newAlbumCover && valid[0]?.url) {
+          setNewAlbumCover(valid[0].url);
+        }
+        showToast(`Added ${valid.length} photos to new folder list.`);
+      }
+    } catch (err) {
+      console.error('New folder photo error:', err);
+      showToast('Error processing photos: ' + err.message);
+    }
+  };
+
+  const handleDrop = async (e) => {
     e.preventDefault();
     setIsDragging(false);
+
+    // Directory & multi-file drop traversal
+    const items = e.dataTransfer.items;
+    if (items && items.length > 0) {
+      const fileList = [];
+      const traverseEntry = async (entry) => {
+        if (!entry) return;
+        if (entry.isFile) {
+          try {
+            const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
+            if (file && (file.type?.startsWith('image/') || file.type?.startsWith('video/'))) {
+              fileList.push(file);
+            }
+          } catch (err) {}
+        } else if (entry.isDirectory) {
+          try {
+            const dirReader = entry.createReader();
+            const entries = await new Promise((resolve) => dirReader.readEntries(resolve, () => resolve([])));
+            for (const child of entries) {
+              await traverseEntry(child);
+            }
+          } catch (err) {}
+        }
+      };
+
+      const promises = [];
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].webkitGetAsEntry) {
+          const entry = items[i].webkitGetAsEntry();
+          if (entry) {
+            promises.push(traverseEntry(entry));
+            continue;
+          }
+        }
+        const file = items[i].getAsFile ? items[i].getAsFile() : null;
+        if (file && (file.type?.startsWith('image/') || file.type?.startsWith('video/'))) {
+          fileList.push(file);
+        }
+      }
+
+      await Promise.all(promises);
+      if (fileList.length > 0) {
+        handleMultipleFiles(fileList);
+        return;
+      }
+    }
+
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       handleMultipleFiles(e.dataTransfer.files);
     }
   };
 
-  // Add a single direct URL to the batch queue
+  // Add multiple direct URLs to the batch queue (supports commas, newlines, spaces)
   const handleAddUrlToQueue = (e) => {
     e.preventDefault();
     if (!singleUrl.trim()) return;
 
+    const rawTokens = singleUrl.split(/[\n,\s]+/);
+    const urls = rawTokens.map(u => u.trim()).filter(u => u.startsWith('http://') || u.startsWith('https://') || u.startsWith('data:'));
+    if (urls.length === 0) return;
+
     const targetFolderId = selectedAlbumId || albums[0]?.folderId || albums[0]?.id || 'folder-kyoto';
 
-    setBatchQueue((prev) => [
-      ...prev,
-      {
-        id: `media-url-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-        url: singleUrl.trim(),
-        type: 'photo',
-        title: singleTitle.trim() || `Photo ${prev.length + 1}`,
-        caption: '',
-        camera: batchCamera || '',
-        albumId: targetFolderId,
-        folderId: targetFolderId
-      }
-    ]);
+    const newItems = urls.map((url, idx) => ({
+      id: `media-url-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`,
+      url,
+      type: 'photo',
+      title: singleTitle.trim() ? (urls.length > 1 ? `${singleTitle.trim()} ${idx + 1}` : singleTitle.trim()) : `Photo ${batchQueue.length + idx + 1}`,
+      caption: '',
+      camera: batchCamera || '',
+      albumId: targetFolderId,
+      folderId: targetFolderId
+    }));
 
+    setBatchQueue((prev) => [...prev, ...newItems]);
     setSingleUrl('');
     setSingleTitle('');
-    showToast('Added image URL to queue.');
+    showToast(`Added ${newItems.length} ${newItems.length === 1 ? 'image' : 'images'} to queue.`);
   };
 
   const updateQueueItem = (index, field, value) => {
@@ -397,7 +594,7 @@ export default function StudioModal({
     }
   };
 
-  // Create new folder directly in Cloud Database
+  // Create new folder directly in Cloud Database along with multiple photos if selected
   const handleCreateAlbum = async (e) => {
     e.preventDefault();
     if (!newAlbumTitle.trim()) {
@@ -406,10 +603,14 @@ export default function StudioModal({
     }
 
     setIsSubmitting(true);
+    setUploadProgressPercent(10);
     setUploadProgressText('Creating folder in Cloud Database...');
     const folderName = newAlbumTitle.trim();
     const slug = folderName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'folder';
     const folderId = `folder-${slug}-${Date.now()}`;
+
+    const defaultCover = newFolderPhotos[0]?.url || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200&auto=format&fit=crop';
+    const finalCover = (newAlbumCover && newAlbumCover.trim()) ? newAlbumCover.trim() : defaultCover;
 
     const newAlbum = {
       id: folderId,
@@ -420,29 +621,63 @@ export default function StudioModal({
       createdAt: new Date().toISOString(),
       location: newAlbumLocation.trim() || 'Expedition',
       description: newAlbumDesc.trim() || '',
-      coverImage: newAlbumCover.trim() || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200&auto=format&fit=crop'
+      coverImage: finalCover
     };
 
     try {
       const created = await saveAlbum(newAlbum);
+      const activeId = created?.id || created?.folderId || folderId;
+
+      // If user selected multiple photos for this new folder, upload all of them in parallel!
+      if (newFolderPhotos && newFolderPhotos.length > 0) {
+        setUploadProgressText(`Uploading ${newFolderPhotos.length} photos into "${folderName}"...`);
+        const mediaItemsToSave = newFolderPhotos.map((item, index) => ({
+          id: `media-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 6)}`,
+          mediaId: `media-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 6)}`,
+          albumId: activeId,
+          folderId: activeId,
+          userId: 'user_prasobh_appus07',
+          type: item.type || 'photo',
+          title: item.title || `${folderName} ${index + 1}`,
+          location: newAlbumLocation.trim() || '',
+          url: item.url,
+          aspectRatio: item.aspectRatio || 'landscape',
+          createdAt: new Date().toISOString()
+        }));
+
+        await saveMultipleMediaItems(mediaItemsToSave, (current, total, title) => {
+          const pct = Math.max(15, Math.round((current / total) * 100));
+          setUploadProgressPercent(pct);
+          setUploadProgressText(`Uploading ${current} of ${total} (${pct}%): "${title}"...`);
+        });
+      }
+
       await onDataChanged();
       setIsSubmitting(false);
       setUploadProgressText('');
+      setUploadProgressPercent(0);
 
-      const activeId = created?.id || created?.folderId || folderId;
       setSelectedAlbumId(activeId);
       setNewAlbumTitle('');
       setNewAlbumLocation('');
       setNewAlbumCover('');
       setNewAlbumDesc('');
-      showToast(`Created folder "${folderName}" in Cloud Database!`);
+      setNewFolderPhotos([]);
+
+      const photoCountMsg = newFolderPhotos.length > 0 ? ` and uploaded ${newFolderPhotos.length} photos` : '';
+      showToast(`Created folder "${folderName}"${photoCountMsg} in Cloud Database!`);
 
       try {
-        confetti({ particleCount: 40, spread: 55 });
+        confetti({ particleCount: 70, spread: 80, origin: { y: 0.6 } });
       } catch (err) {}
+
+      setTimeout(() => {
+        if (onClose) onClose();
+      }, 500);
     } catch (err) {
       setIsSubmitting(false);
       setUploadProgressText('');
+      setUploadProgressPercent(0);
       showToast('Error creating folder: ' + err.message);
     }
   };
@@ -688,34 +923,166 @@ export default function StudioModal({
                     </div>
                   </div>
 
-                  {/* MULTI-FILE DROPZONE */}
+                  {/* MULTI-FILE ACTION BAR & DROPZONE */}
                   <div
-                    className={`upload-dropzone ${isDragging ? 'dragover' : ''}`}
-                    onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-                    onDragLeave={() => setIsDragging(false)}
-                    onDrop={handleDrop}
-                    onClick={() => document.getElementById('studio-multi-file-input').click()}
-                    style={{ position: 'relative', overflow: 'hidden' }}
+                    style={{
+                      background: 'rgba(212, 175, 55, 0.05)',
+                      border: '1px solid var(--border-gold)',
+                      borderRadius: '8px',
+                      padding: '1.25rem',
+                      marginBottom: '1.25rem',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      textAlign: 'center',
+                      gap: '0.75rem'
+                    }}
                   >
+                    <input
+                      type="file"
+                      id="studio-instant-multi-file-input"
+                      accept="image/*,video/*"
+                      multiple={true}
+                      style={{ display: 'none' }}
+                      onChange={(e) => {
+                        handleDirectUploadMultipleFiles(e.target.files);
+                        e.target.value = '';
+                      }}
+                    />
+
                     <input
                       type="file"
                       id="studio-multi-file-input"
                       accept="image/*,video/*"
-                      multiple
+                      multiple={true}
                       style={{ display: 'none' }}
                       onChange={(e) => {
                         handleMultipleFiles(e.target.files);
                         e.target.value = '';
                       }}
                     />
-                    <Layers size={36} color="var(--accent-gold)" style={{ margin: '0 auto 0.5rem' }} />
-                    <h4 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.15rem', marginBottom: '0.3rem', color: 'var(--text-pure)' }}>
-                      Click or Drag & Drop Multiple Photos / Videos
-                    </h4>
-                    <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', maxWidth: '520px', margin: '0 auto' }}>
-                      Select multiple photos from your computer or phone to publish into <strong style={{ color: 'var(--accent-gold)' }}>"{albums.find(a => (a.folderId || a.id) === selectedAlbumId)?.title || 'Selected Folder'}"</strong>. You can also paste copied images directly (<kbd style={{ background: 'rgba(255,255,255,0.1)', padding: '2px 5px', borderRadius: '3px' }}>Ctrl+V</kbd>).
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <Sparkles size={20} color="var(--accent-gold)" />
+                      <h4 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.25rem', color: 'var(--text-pure)', margin: 0 }}>
+                        Add Multiple Photos to "{albums.find(a => (a.folderId || a.id) === selectedAlbumId)?.title || 'Selected Folder'}"
+                      </h4>
+                    </div>
+
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', maxWidth: '580px', margin: 0 }}>
+                      Select 10, 20, 50+ photos from your phone or computer. All files are compressed and uploaded simultaneously in parallel to central cloud storage.
+                    </p>
+
+                    {/* TWO CONVENIENT MODES: DIRECT INSTANT UPLOAD OR STAGE TO QUEUE */}
+                    <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'center', marginTop: '0.5rem' }}>
+                      <button
+                        type="button"
+                        onClick={() => document.getElementById('studio-instant-multi-file-input').click()}
+                        disabled={isSubmitting}
+                        className="auth-submit-btn"
+                        id="btn-direct-upload-multi-photos"
+                        style={{
+                          width: 'auto',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.6rem',
+                          padding: '0.85rem 1.85rem',
+                          fontWeight: 800,
+                          fontSize: '0.9rem',
+                          background: 'linear-gradient(135deg, #d4af37, #f3e5ab)',
+                          color: '#000',
+                          boxShadow: '0 4px 20px rgba(212, 175, 55, 0.35)'
+                        }}
+                      >
+                        <Upload size={17} />
+                        <span>⚡ Choose Multiple Photos (Upload Now)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => document.getElementById('studio-multi-file-input').click()}
+                        disabled={isSubmitting}
+                        style={{
+                          background: 'rgba(255, 255, 255, 0.06)',
+                          border: '1px solid var(--border-medium)',
+                          color: 'var(--text-pure)',
+                          fontSize: '0.82rem',
+                          padding: '0.75rem 1.25rem',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.45rem'
+                        }}
+                        title="Add to queue first to customize individual titles and captions"
+                      >
+                        <Layers size={15} />
+                        <span>Stage to Queue & Edit Captions</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* MULTI-FILE DRAG & DROP ZONE */}
+                  <div
+                    className={`upload-dropzone ${isDragging ? 'dragover' : ''}`}
+                    onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                    onDragLeave={() => setIsDragging(false)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setIsDragging(false);
+                      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                        handleDirectUploadMultipleFiles(e.dataTransfer.files);
+                      }
+                    }}
+                    onClick={() => document.getElementById('studio-instant-multi-file-input').click()}
+                    style={{ position: 'relative', overflow: 'hidden', padding: '1.75rem 1.5rem', cursor: 'pointer', marginBottom: '1.25rem' }}
+                  >
+                    <Layers size={32} color="var(--accent-gold)" style={{ margin: '0 auto 0.5rem' }} />
+                    <h5 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.05rem', marginBottom: '0.3rem', color: 'var(--text-pure)' }}>
+                      Or Drag & Drop Multiple Photos or Whole Folders Here
+                    </h5>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', margin: 0 }}>
+                      Supports JPEG, PNG, WebP, HEIC, Video. Hold <kbd style={{ background: 'rgba(255,255,255,0.1)', padding: '2px 5px', borderRadius: '3px' }}>Shift</kbd> / <kbd style={{ background: 'rgba(255,255,255,0.1)', padding: '2px 5px', borderRadius: '3px' }}>Ctrl</kbd> to select multiple, or paste with <kbd style={{ background: 'rgba(255,255,255,0.1)', padding: '2px 5px', borderRadius: '3px' }}>Ctrl+V</kbd>.
                     </p>
                   </div>
+
+                  {/* Animated Progress Bar during Direct Batch Upload */}
+                  {isSubmitting && (
+                    <div style={{
+                      background: 'rgba(0, 0, 0, 0.85)',
+                      border: '1px solid var(--border-gold)',
+                      borderRadius: '8px',
+                      padding: '1.25rem',
+                      marginBottom: '1.5rem'
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <RefreshCw size={15} color="var(--accent-gold)" className="spin-anim" />
+                          <span style={{ color: 'var(--accent-gold)', fontSize: '0.85rem', fontWeight: 600 }}>
+                            {uploadProgressText || 'Uploading to Cloud Gallery...'}
+                          </span>
+                        </div>
+                        <span style={{ color: 'var(--text-primary)', fontSize: '0.9rem', fontWeight: 800 }}>
+                          {uploadProgressPercent}%
+                        </span>
+                      </div>
+                      <div style={{
+                        width: '100%',
+                        height: '8px',
+                        background: 'rgba(255, 255, 255, 0.1)',
+                        borderRadius: '999px',
+                        overflow: 'hidden'
+                      }}>
+                        <div style={{
+                          width: `${uploadProgressPercent}%`,
+                          height: '100%',
+                          background: 'linear-gradient(90deg, #d4af37, #f3e5ab)',
+                          borderRadius: '999px',
+                          transition: 'width 0.3s ease'
+                        }} />
+                      </div>
+                    </div>
+                  )}
 
                   {/* Or add via direct URL */}
                   <form onSubmit={handleAddUrlToQueue} style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.75rem' }}>
@@ -723,7 +1090,7 @@ export default function StudioModal({
                       type="text"
                       value={singleUrl}
                       onChange={(e) => setSingleUrl(e.target.value)}
-                      placeholder="Or paste direct Image URL (https://...)"
+                      placeholder="Or paste direct Image URLs (separated by comma, space or newline)"
                       className="form-input"
                       style={{ flex: 1 }}
                     />
@@ -876,15 +1243,15 @@ export default function StudioModal({
                                   type="text"
                                   value={item.title}
                                   onChange={(e) => updateQueueItem(idx, 'title', e.target.value)}
-                                  placeholder="Photo Title"
+                                  placeholder="Photo title"
                                   className="form-input"
-                                  style={{ flex: 2, minWidth: '130px', padding: '0.35rem 0.6rem', fontSize: '0.825rem' }}
+                                  style={{ flex: 1, minWidth: '130px', padding: '0.35rem 0.6rem', fontSize: '0.85rem' }}
                                 />
                                 <select
-                                  value={item.folderId || item.albumId || selectedAlbumId}
-                                  onChange={(e) => updateQueueItem(idx, 'folderId', e.target.value)}
+                                  value={item.albumId}
+                                  onChange={(e) => updateQueueItem(idx, 'albumId', e.target.value)}
                                   className="form-select"
-                                  style={{ flex: 1, minWidth: '120px', padding: '0.35rem 0.5rem', fontSize: '0.75rem' }}
+                                  style={{ width: 'auto', minWidth: '120px', padding: '0.35rem 0.6rem', fontSize: '0.8rem' }}
                                 >
                                   {albums.map((alb) => {
                                     const albId = alb.folderId || alb.id;
@@ -928,35 +1295,6 @@ export default function StudioModal({
                         ))}
                       </div>
 
-                      {/* Animated Progress Bar during Batch Upload */}
-                      {isSubmitting && (
-                        <div style={{ marginBottom: '1.25rem' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
-                            <span style={{ color: 'var(--accent-gold)', fontSize: '0.8rem', fontWeight: 600 }}>
-                              {uploadProgressText}
-                            </span>
-                            <span style={{ color: 'var(--text-primary)', fontSize: '0.8rem', fontWeight: 700 }}>
-                              {uploadProgressPercent}%
-                            </span>
-                          </div>
-                          <div style={{
-                            width: '100%',
-                            height: '6px',
-                            background: 'rgba(255, 255, 255, 0.1)',
-                            borderRadius: '999px',
-                            overflow: 'hidden'
-                          }}>
-                            <div style={{
-                              width: `${uploadProgressPercent}%`,
-                              height: '100%',
-                              background: 'linear-gradient(90deg, #d4af37, #f3e5ab)',
-                              borderRadius: '999px',
-                              transition: 'width 0.3s ease'
-                            }} />
-                          </div>
-                        </div>
-                      )}
-
                       <button
                         onClick={handlePublishAllBatch}
                         disabled={isSubmitting}
@@ -984,9 +1322,14 @@ export default function StudioModal({
               {/* TAB 2: MANAGE FOLDERS & EDIT COVER PICTURES */}
               {activeTab === 'albums' && (
                 <div>
-                  <h4 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.1rem', marginBottom: '0.75rem', color: 'var(--text-pure)' }}>
-                    MAKE A NEW FOLDER
-                  </h4>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+                    <h4 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.15rem', color: 'var(--text-pure)', margin: 0 }}>
+                      CREATE NEW FOLDER WITH MULTIPLE PHOTOS
+                    </h4>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--accent-gold)', fontWeight: 600 }}>
+                      1-Step Folder & Multi-Photo Batch
+                    </span>
+                  </div>
 
                   <form onSubmit={handleCreateAlbum} style={{ marginBottom: '2.5rem' }}>
                     <div className="form-grid">
@@ -1015,70 +1358,174 @@ export default function StudioModal({
                         />
                       </div>
 
-                      {/* COVER IMAGE: DRAG & DROP / CLICK / CLIPBOARD PASTE */}
+                      {/* MULTI-PHOTO SELECTION FOR NEW FOLDER */}
                       <div className="form-field full-width">
-                        <label className="form-label">Cover Image (Drag & Drop, Click to Browse, or Paste)</label>
-                        <div
-                          className={`upload-dropzone ${isAlbumCoverDragging ? 'dragover' : ''}`}
-                          style={{ padding: '1.5rem', marginBottom: '0.5rem' }}
-                          onDragOver={(e) => { e.preventDefault(); setIsAlbumCoverDragging(true); }}
-                          onDragLeave={() => setIsAlbumCoverDragging(false)}
-                          onDrop={handleAlbumCoverDrop}
-                          onPaste={handlePasteOnCoverDropzone}
-                          onClick={() => document.getElementById('album-cover-file-input').click()}
-                          tabIndex={0}
-                        >
-                          <input
-                            type="file"
-                            id="album-cover-file-input"
-                            accept="image/*"
-                            style={{ display: 'none' }}
-                            onChange={(e) => handleAlbumCoverFile(e.target.files[0])}
-                          />
-
-                          {newAlbumCover ? (
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1rem' }}>
-                              <img
-                                src={newAlbumCover}
-                                alt="Cover preview"
-                                style={{ width: '80px', height: '60px', objectFit: 'cover', borderRadius: '4px', border: '1px solid var(--border-gold)' }}
-                              />
-                              <div style={{ textAlign: 'left' }}>
-                                <div style={{ fontSize: '0.8rem', color: 'var(--text-pure)', fontWeight: 600 }}>Cover Image Selected</div>
-                                <div style={{ fontSize: '0.7rem', color: 'var(--accent-gold)' }}>Click or drag a different file to replace</div>
-                              </div>
-                            </div>
-                          ) : (
-                            <>
-                              <Upload size={24} color="var(--accent-gold)" style={{ margin: '0 auto 0.35rem' }} />
-                              <h5 style={{ fontFamily: 'var(--font-serif)', fontSize: '0.9rem', marginBottom: '0.2rem' }}>
-                                Drag & Drop Cover Photo, Click, or Paste (Ctrl+V)
-                              </h5>
-                              <p style={{ color: 'var(--text-muted)', fontSize: '0.725rem' }}>
-                                Supports JPEG, PNG, WebP or direct image paste
-                              </p>
-                            </>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                          <label className="form-label" style={{ margin: 0 }}>
+                            Select Multiple Photos for this Folder (Batch Upload)
+                          </label>
+                          {newFolderPhotos.length > 0 && (
+                            <span style={{ fontSize: '0.75rem', color: 'var(--accent-gold)', fontWeight: 700 }}>
+                              {newFolderPhotos.length} {newFolderPhotos.length === 1 ? 'Photo' : 'Photos'} Selected
+                            </span>
                           )}
                         </div>
+
+                        <input
+                          type="file"
+                          id="new-folder-multi-file-input"
+                          accept="image/*,video/*"
+                          multiple={true}
+                          style={{ display: 'none' }}
+                          onChange={(e) => {
+                            handleNewFolderMultipleFiles(e.target.files);
+                            e.target.value = '';
+                          }}
+                        />
+
+                        <div
+                          className={`upload-dropzone ${isAlbumCoverDragging ? 'dragover' : ''}`}
+                          style={{ padding: '1.5rem', marginBottom: '0.75rem', cursor: 'pointer' }}
+                          onDragOver={(e) => { e.preventDefault(); setIsAlbumCoverDragging(true); }}
+                          onDragLeave={() => setIsAlbumCoverDragging(false)}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            setIsAlbumCoverDragging(false);
+                            if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                              handleNewFolderMultipleFiles(e.dataTransfer.files);
+                            }
+                          }}
+                          onClick={() => document.getElementById('new-folder-multi-file-input').click()}
+                        >
+                          <Layers size={28} color="var(--accent-gold)" style={{ margin: '0 auto 0.4rem' }} />
+                          <h5 style={{ fontFamily: 'var(--font-serif)', fontSize: '1rem', marginBottom: '0.25rem', color: 'var(--text-pure)' }}>
+                            Click to Select Multiple Photos or Drag Folder Here
+                          </h5>
+                          <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', margin: 0 }}>
+                            Select 5, 10, 20+ photos at once. The first photo will automatically be used as the Folder Cover.
+                          </p>
+                        </div>
+
+                        {/* Selected Photos Preview Strip with Cover Selector */}
+                        {newFolderPhotos.length > 0 && (
+                          <div style={{
+                            background: '#000',
+                            border: '1px solid var(--border-subtle)',
+                            borderRadius: '6px',
+                            padding: '0.75rem',
+                            marginBottom: '0.85rem'
+                          }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                                Click any photo below to set as Cover Photo:
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setNewFolderPhotos([])}
+                                style={{ background: 'none', border: 'none', color: '#f87171', fontSize: '0.7rem', cursor: 'pointer' }}
+                              >
+                                Clear All
+                              </button>
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '0.5rem', overflowX: 'auto', paddingBottom: '0.35rem' }}>
+                              {newFolderPhotos.map((p, pIdx) => {
+                                const isCover = (newAlbumCover === p.url) || (!newAlbumCover && pIdx === 0);
+                                return (
+                                  <div
+                                    key={p.id || pIdx}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setNewAlbumCover(p.url);
+                                    }}
+                                    style={{
+                                      position: 'relative',
+                                      flexShrink: 0,
+                                      width: '70px',
+                                      height: '52px',
+                                      borderRadius: '4px',
+                                      overflow: 'hidden',
+                                      cursor: 'pointer',
+                                      border: isCover ? '2px solid var(--accent-gold)' : '1px solid rgba(255,255,255,0.1)'
+                                    }}
+                                  >
+                                    <img src={p.url} alt={p.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                    {isCover && (
+                                      <span style={{
+                                        position: 'absolute',
+                                        top: '2px',
+                                        left: '2px',
+                                        background: 'var(--accent-gold)',
+                                        color: '#000',
+                                        fontSize: '0.55rem',
+                                        fontWeight: 800,
+                                        padding: '1px 3px',
+                                        borderRadius: '2px'
+                                      }}>
+                                        COVER
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
 
                         <input
                           type="text"
                           value={newAlbumCover}
                           onChange={(e) => setNewAlbumCover(e.target.value)}
-                          placeholder="Or paste direct image URL (https://...)"
+                          placeholder="Or paste direct Cover image URL (https://...)"
                           className="form-input"
                           id="input-new-folder-cover"
                         />
                       </div>
                     </div>
 
+                    {/* Animated Progress Bar during Folder Creation */}
+                    {isSubmitting && (
+                      <div style={{
+                        background: 'rgba(0, 0, 0, 0.85)',
+                        border: '1px solid var(--border-gold)',
+                        borderRadius: '8px',
+                        padding: '1rem',
+                        marginBottom: '1.25rem'
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                          <span style={{ color: 'var(--accent-gold)', fontSize: '0.8rem', fontWeight: 600 }}>
+                            {uploadProgressText || 'Creating folder in Cloud Database...'}
+                          </span>
+                          <span style={{ color: 'var(--text-primary)', fontSize: '0.8rem', fontWeight: 800 }}>
+                            {uploadProgressPercent}%
+                          </span>
+                        </div>
+                        <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '999px', overflow: 'hidden' }}>
+                          <div style={{ width: `${uploadProgressPercent}%`, height: '100%', background: 'linear-gradient(90deg, #d4af37, #f3e5ab)', borderRadius: '999px', transition: 'width 0.3s ease' }} />
+                        </div>
+                      </div>
+                    )}
+
                     <button
                       type="submit"
                       disabled={isSubmitting}
                       className="auth-submit-btn"
                       id="btn-create-folder-submit"
+                      style={{ padding: '0.95rem', fontSize: '0.9rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
                     >
-                      {isSubmitting ? (uploadProgressText || 'Creating in Cloud...') : '+ Create New Folder in Cloud'}
+                      {isSubmitting ? (
+                        <>
+                          <RefreshCw size={16} className="spin-anim" />
+                          <span>{uploadProgressText || 'Creating in Cloud...'}</span>
+                        </>
+                      ) : (
+                        <>
+                          <FolderPlus size={16} />
+                          <span>
+                            + Create Folder {newFolderPhotos.length > 0 ? `& Upload ${newFolderPhotos.length} ${newFolderPhotos.length === 1 ? 'Photo' : 'Photos'}` : ''} in Cloud
+                          </span>
+                        </>
+                      )}
                     </button>
                   </form>
 

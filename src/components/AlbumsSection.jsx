@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { MapPin, ArrowRight } from 'lucide-react';
+import { MapPin, ArrowRight, Plus, FolderPlus, Layers } from 'lucide-react';
 
-export default function AlbumsSection({ albums, media, onOpenFolder }) {
+export default function AlbumsSection({ albums, media, onOpenFolder, onOpenStudio }) {
   const [blurAmount, setBlurAmount] = useState(0);
   const [textOpacity, setTextOpacity] = useState(0.95);
   const [textScale, setTextScale] = useState(1);
@@ -14,33 +14,22 @@ export default function AlbumsSection({ albums, media, onOpenFolder }) {
       const rect = containerRef.current.getBoundingClientRect();
       const winHeight = window.innerHeight;
 
-      // rect.top is the distance from top of viewport to the start of Albums section
-      // 1. When rect.top >= 0: Approaching or just arrived at full-page ALBUMS (Crystal clear)
-      // 2. While -rect.top is between 0 and winHeight * 0.3: Full-page ALBUMS stage in view (0px blur, full opacity)
-      // 3. When -rect.top passes winHeight * 0.3: First folder begins entering, blur smoothly transitions from 0px to 10px
-      // 4. Throughout the folders: Stays at 10px blur and ~0.18 opacity as a static backdrop
-      // 5. Near the end of folders section: Gently fades out
-
       const scrolledInside = -rect.top;
-      const blurStartThreshold = winHeight * 0.25; // Accurate threshold where folders approach
-      const blurEndThreshold = winHeight * 0.75;   // Where blur reaches full backdrop depth
+      const blurStartThreshold = winHeight * 0.25;
+      const blurEndThreshold = winHeight * 0.75;
 
       if (scrolledInside <= blurStartThreshold) {
-        // Stage 1: Crystal sharp and clear in exact center
         setBlurAmount(0);
         setTextOpacity(0.95);
         setTextScale(1);
         setTrackingAmount(0.28);
       } else if (scrolledInside < blurEndThreshold) {
-        // Stage 2: Smooth, precise interpolation as first folder scrolls in
         const progress = (scrolledInside - blurStartThreshold) / (blurEndThreshold - blurStartThreshold);
         setBlurAmount(progress * 10);
-        setTextOpacity(0.95 - progress * 0.77); // Transitions from 0.95 down to 0.18
+        setTextOpacity(0.95 - progress * 0.77);
         setTextScale(1 - progress * 0.08);
         setTrackingAmount(0.28 + progress * 0.15);
       } else {
-        // Stage 3: Stable static blurred backdrop throughout the folders
-        // Check if approaching the very end of albums section
         const totalHeight = rect.height;
         const remaining = totalHeight - (scrolledInside + winHeight);
         
@@ -60,7 +49,7 @@ export default function AlbumsSection({ albums, media, onOpenFolder }) {
     };
 
     window.addEventListener('scroll', handleScroll, { passive: true });
-    handleScroll(); // Initial run
+    handleScroll();
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
@@ -141,15 +130,63 @@ export default function AlbumsSection({ albums, media, onOpenFolder }) {
                   {album.description && (
                     <p className="folder-card-caption">{album.description}</p>
                   )}
-                  <div className="folder-view-cue">
-                    <span>Open Album</span>
-                    <ArrowRight size={13} />
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '0.4rem' }}>
+                    <div className="folder-view-cue">
+                      <span>Open Album</span>
+                      <ArrowRight size={13} />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (onOpenStudio) onOpenStudio(albumId);
+                      }}
+                      style={{
+                        background: 'rgba(212, 175, 55, 0.15)',
+                        border: '1px solid var(--border-gold)',
+                        color: 'var(--accent-gold)',
+                        fontSize: '0.7rem',
+                        padding: '0.25rem 0.6rem',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.25rem',
+                        fontWeight: 600
+                      }}
+                      title={`Add multiple photos to ${albumTitle}`}
+                    >
+                      <Plus size={11} />
+                      <span>+ Add Photos</span>
+                    </button>
                   </div>
                 </div>
               </div>
             </div>
           );
         })}
+      </div>
+
+      {/* Bottom Action Bar on Albums Section */}
+      <div style={{ textAlign: 'center', margin: '3rem 0 5rem', position: 'relative', zIndex: 5 }}>
+        <button
+          onClick={() => onOpenStudio && onOpenStudio()}
+          className="auth-submit-btn"
+          style={{
+            width: 'auto',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '0.6rem',
+            padding: '0.85rem 2rem',
+            fontSize: '0.88rem',
+            fontWeight: 700
+          }}
+          id="btn-albums-create-folder"
+        >
+          <FolderPlus size={16} />
+          <span>+ Create New Folder & Upload Photos</span>
+        </button>
       </div>
     </section>
   );

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Camera, Lock, ArrowLeft } from 'lucide-react';
+import { Camera, Lock, ArrowLeft, Plus } from 'lucide-react';
 
 export default function Navbar({ onOpenStudio, onBackToHome, isInsideFolder }) {
   const [scrolled, setScrolled] = useState(false);
@@ -47,13 +47,13 @@ export default function Navbar({ onOpenStudio, onBackToHome, isInsideFolder }) {
           </nav>
         )}
 
-        {/* Actions (Studio Access / Back) */}
+        {/* Actions (Add Photos / Studio Access / Back) */}
         <div className="nav-actions">
           {isInsideFolder && (
             <button
               onClick={onBackToHome}
               className="btn-studio"
-              style={{ marginRight: '0.5rem' }}
+              style={{ marginRight: '0.4rem' }}
             >
               <ArrowLeft size={13} />
               <span>Back to Albums</span>
@@ -61,13 +61,29 @@ export default function Navbar({ onOpenStudio, onBackToHome, isInsideFolder }) {
           )}
 
           <button
-            onClick={onOpenStudio}
+            onClick={() => onOpenStudio && onOpenStudio()}
+            className="btn-studio"
+            style={{
+              background: 'rgba(212, 175, 55, 0.12)',
+              borderColor: 'var(--border-gold)',
+              color: 'var(--accent-gold)',
+              fontWeight: 700
+            }}
+            id="nav-btn-upload-photos"
+            title="Upload Multiple Photos"
+          >
+            <Plus size={13} />
+            <span>+ Add Photos</span>
+          </button>
+
+          <button
+            onClick={() => onOpenStudio && onOpenStudio()}
             className="btn-studio"
             id="btn-open-studio"
-            title="Studio Access"
+            title="Studio Portal & Settings"
           >
             <Lock size={12} />
-            <span>Studio Access</span>
+            <span>Studio</span>
           </button>
         </div>
       </div>

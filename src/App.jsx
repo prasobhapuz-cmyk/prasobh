@@ -181,6 +181,8 @@ export default function App() {
           onBack={handleBackToAlbums}
           onOpenMedia={handleOpenLightbox}
           onOpenStudio={(folderId) => handleOpenStudio(folderId)}
+          onDataChanged={loadData}
+          showToast={showToast}
         />
       ) : (
         /* VIEW 2: MAIN HOME EXPERIENCE */
@@ -193,6 +195,7 @@ export default function App() {
             albums={albums}
             media={media}
             onOpenFolder={handleOpenFolder}
+            onOpenStudio={(folderId) => handleOpenStudio(folderId)}
           />
 
           {/* Motion Cinema Archive */}
