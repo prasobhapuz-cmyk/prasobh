@@ -1,4 +1,4 @@
-// IndexedDB Storage Service for Prasobh's Gallery with Cross-Device Sync Support
+// IndexedDB Storage Service for Prasobh's Gallery
 
 const DB_NAME = 'GeometryOfSilenceDB';
 const DB_VERSION = 2;
@@ -57,77 +57,51 @@ function openDB() {
   });
 }
 
-// Initialize storage: check IndexedDB and sync with public gallery_manifest.json
 export async function initializeStorage() {
-  const db = await openDB();
-  
-  // 1. Check local database
-  const localAlbums = await getAlbums();
-  
-  // 2. Fetch manifest if available
-  let manifest = null;
   try {
-    const res = await fetch('/gallery_manifest.json', { cache: 'no-cache' });
-    if (res.ok) {
-      manifest = await res.json();
-    }
-  } catch (err) {
-    console.log('Manifest not reachable, using local database.');
-  }
+    const db = await openDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction([ALBUMS_STORE, MEDIA_STORE], 'readwrite');
+      const albumStore = tx.objectStore(ALBUMS_STORE);
 
-  const tx = db.transaction([ALBUMS_STORE, MEDIA_STORE], 'readwrite');
-  const albumStore = tx.objectStore(ALBUMS_STORE);
-  const mediaStore = tx.objectStore(MEDIA_STORE);
-
-  // If local database is empty, seed with manifest or default albums
-  if (localAlbums.length === 0) {
-    const seedAlbums = (manifest && manifest.albums && manifest.albums.length > 0)
-      ? manifest.albums
-      : DEFAULT_ALBUMS;
-
-    for (const album of seedAlbums) {
-      albumStore.put(album);
-    }
-
-    if (manifest && manifest.media && manifest.media.length > 0) {
-      for (const item of manifest.media) {
-        mediaStore.put(item);
-      }
-    }
-  } else if (manifest && manifest.albums) {
-    // Merge any new manifest albums that don't exist locally yet
-    const existingIds = new Set(localAlbums.map((a) => a.id));
-    for (const album of manifest.albums) {
-      if (!existingIds.has(album.id)) {
-        albumStore.put(album);
-      }
-    }
-    if (manifest.media) {
-      const localMedia = await getAllMedia();
-      const existingMediaIds = new Set(localMedia.map((m) => m.id));
-      for (const item of manifest.media) {
-        if (!existingMediaIds.has(item.id)) {
-          mediaStore.put(item);
+      const req = albumStore.count();
+      req.onsuccess = () => {
+        if (req.result === 0) {
+          for (const album of DEFAULT_ALBUMS) {
+            albumStore.put(album);
+          }
         }
-      }
-    }
-  }
+      };
 
-  return new Promise((resolve) => {
-    tx.oncomplete = () => resolve(true);
-    tx.onerror = () => resolve(false);
-  });
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+    });
+  } catch (err) {
+    console.error('IndexedDB initialize error:', err);
+    return false;
+  }
 }
 
 export async function getAlbums() {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(ALBUMS_STORE, 'readonly');
-    const store = tx.objectStore(ALBUMS_STORE);
-    const req = store.getAll();
-    req.onsuccess = () => resolve(req.result || []);
-    req.onerror = () => reject(req.error);
-  });
+  try {
+    const db = await openDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(ALBUMS_STORE, 'readonly');
+      const store = tx.objectStore(ALBUMS_STORE);
+      const req = store.getAll();
+      req.onsuccess = () => {
+        const list = req.result;
+        if (list && list.length > 0) {
+          resolve(list);
+        } else {
+          resolve(DEFAULT_ALBUMS);
+        }
+      };
+      req.onerror = () => resolve(DEFAULT_ALBUMS);
+    });
+  } catch (err) {
+    return DEFAULT_ALBUMS;
+  }
 }
 
 export async function saveAlbum(album) {
@@ -184,14 +158,18 @@ export async function deleteAlbum(albumId) {
 }
 
 export async function getAllMedia() {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(MEDIA_STORE, 'readonly');
-    const store = tx.objectStore(MEDIA_STORE);
-    const req = store.getAll();
-    req.onsuccess = () => resolve(req.result || []);
-    req.onerror = () => reject(req.error);
-  });
+  try {
+    const db = await openDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(MEDIA_STORE, 'readonly');
+      const store = tx.objectStore(MEDIA_STORE);
+      const req = store.getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => resolve([]);
+    });
+  } catch (err) {
+    return [];
+  }
 }
 
 export async function saveMediaItem(mediaItem) {

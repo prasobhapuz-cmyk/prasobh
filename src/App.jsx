@@ -8,10 +8,10 @@ import AboutContactSection from './components/AboutContactSection';
 import FolderDetailPage from './components/FolderDetailPage';
 import LightboxModal from './components/LightboxModal';
 import StudioModal from './components/StudioModal';
-import { initializeStorage, getAlbums, getAllMedia } from './services/storage';
+import { initializeStorage, getAlbums, getAllMedia, DEFAULT_ALBUMS } from './services/storage';
 
 export default function App() {
-  const [albums, setAlbums] = useState([]);
+  const [albums, setAlbums] = useState(DEFAULT_ALBUMS);
   const [media, setMedia] = useState([]);
   const [activeFolder, setActiveFolder] = useState(null);
   const [lightboxItem, setLightboxItem] = useState(null);
